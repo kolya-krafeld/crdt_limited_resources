@@ -21,8 +21,32 @@ public class LimitedResourceCrdt implements Crdt {
         upperCounter.set(index, upperCounter.get(index) + 1);
     }
 
-    public void decrement(int index) {
-        lowerCounter.set(index, lowerCounter.get(index) + 1);
+    public void setUpper(int index, int value) {
+        upperCounter.set(index, value);
+    }
+
+    /**
+     * Decrement the lower counter at index if it smaller than the greater counter.
+     * @return false if the lower counter is already >= the upper counter.
+     */
+    public boolean decrement(int index) {
+        if (upperCounter.get(index) > lowerCounter.get(index)) {
+            lowerCounter.set(index, lowerCounter.get(index) + 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Set the lower counter at index if it is smaller or equal to the upper counter.
+     * @return false if the value is greater than the current upper counter.
+     */
+    public boolean setLower(int index, int value) {
+        if (value > upperCounter.get(index)) {
+            return false;
+        }
+        lowerCounter.set(index, value);
+        return true;
     }
 
     @Override
