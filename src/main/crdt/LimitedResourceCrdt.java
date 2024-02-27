@@ -1,11 +1,12 @@
-package crdt;
+package main.crdt;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class LimitedResourceCrdt implements Crdt {
-
     int numberOfProcesses;
+
     private List<Integer> upperCounter = new ArrayList<>();
     private List<Integer> lowerCounter = new ArrayList<>();
 
@@ -15,6 +16,27 @@ public class LimitedResourceCrdt implements Crdt {
             upperCounter.add(0);
             lowerCounter.add(0);
         }
+    }
+
+    /**
+     * Create a CRDT from a string representation of the CRDT.
+     * e.g. [10;10;10],[1;8;0]
+     */
+    public LimitedResourceCrdt(String crdtString) {
+        String[] crdtStrings = crdtString.split(",");
+        String upperString = crdtStrings[0].substring(1, crdtStrings[0].length() - 1);
+        String lowerString = crdtStrings[1].substring(1, crdtStrings[1].length() - 1);
+
+        String[] upperStrings = upperString.split(";");
+        String[] lowerStrings = lowerString.split(";");
+        for (String s : upperStrings) {
+            upperCounter.add(Integer.parseInt(s));
+        }
+        for (String s : lowerStrings) {
+            lowerCounter.add(Integer.parseInt(s));
+        }
+
+        this.numberOfProcesses = upperCounter.size();
     }
 
     public void increment(int index) {
@@ -68,5 +90,27 @@ public class LimitedResourceCrdt implements Crdt {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns a string representation of the CRDT to be send over the network.
+     * e.g. [10;10;10],[1;8;0]
+     */
+    @Override
+    public String toString() {
+        return "[" + upperCounter.stream().map(e -> e.toString()).collect(Collectors.joining(";")) + "],["
+                + lowerCounter.stream().map(e -> e.toString()).collect(Collectors.joining(";")) + "]";
+    }
+
+    public int getNumberOfProcesses() {
+        return numberOfProcesses;
+    }
+
+    public List<Integer> getUpperCounter() {
+        return upperCounter;
+    }
+
+    public List<Integer> getLowerCounter() {
+        return lowerCounter;
     }
 }
