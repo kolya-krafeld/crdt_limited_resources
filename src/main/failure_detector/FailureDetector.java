@@ -8,8 +8,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import node.Node;
 import config.Config;
+import node.Node;
 
 public class FailureDetector {
     private Node ownerNode;
