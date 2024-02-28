@@ -1,4 +1,4 @@
-package crdt;
+package main.crdt;
 
 /**
  * State-based CRDT interface.

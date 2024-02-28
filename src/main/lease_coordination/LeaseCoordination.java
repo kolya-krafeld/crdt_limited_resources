@@ -1,4 +1,4 @@
-package lease_coordination;
+package main.lease_coordination;
 
 public class LeaseCoordination {
 }
