@@ -3,7 +3,6 @@ package main;
 import com.sun.net.httpserver.Authenticator;
 import main.crdt.LimitedResourceCrdt;
 import main.utils.MessageType;
-import main.failure_detector.FailureDetector;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -62,6 +61,19 @@ class Node {
     private FailureDetector failureDetector;
 
     /**
+     * CRDT tht we have accepted but is not decided yet.
+     */
+    private LimitedResourceCrdt acceptedCrdt = null;
+
+    /**
+     * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
+     */
+    private LimitedResourceCrdt leaderMergedCrdt = null;
+
+    private int numberOfStates = 0;
+    private int numberOfAccepted = 0;
+
+    /**
      * Utils object that handels sending messages.
      */
     private final MessageHandler messageHandler;
@@ -69,6 +81,26 @@ class Node {
      * Flag to indicate if the node is currently in lease coordination phase.
      */
     boolean inCoordinationPhase = false;
+
+    /**
+     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
 
     /**
      * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
@@ -93,6 +125,13 @@ class Node {
         this.ownIndex = ownIndex;
         this.failureDetector = new FailureDetector(this.ownPort, nodesPorts, config);
 
+
+        // Get own index in port list
+        int ownIndex = nodesPorts.indexOf(port);
+        if (ownIndex == -1) {
+            throw new IllegalArgumentException("Port not in list of nodes.");
+        }
+        this.ownIndex = ownIndex;
     }
 
     public void init() throws Exception {
@@ -133,6 +172,10 @@ class Node {
 
     public LimitedResourceCrdt getCrdt() {
         return crdt;
+    }
+
+    public void setLeaderPort(int leaderPort) {
+        this.leaderPort = leaderPort;
     }
 
     public void setLeaderPort(int leaderPort) {

@@ -1,7 +1,5 @@
 package main;
 
-
-import java.util.ArrayList;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
@@ -24,9 +22,6 @@ public class Main {
         node2.getCrdt().setUpper(0,10);
         node2.getCrdt().setUpper(1,10);
         node2.setLeaderPort(8000);
-        Node node1 = new Node(8000, ports, config);
-        node1.init();
-        Node node2 = new Node(8001, ports, config);
         node2.init();
 
         CrdtChanger2 crdtChanger = new CrdtChanger2(node1, node2);
@@ -136,4 +131,4 @@ public class Main {
             }
         }
     }
-
+}
