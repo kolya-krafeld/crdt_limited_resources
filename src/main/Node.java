@@ -1,15 +1,14 @@
 package main;
 
 import main.crdt.LimitedResourceCrdt;
+import main.utils.MessageType;
 
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.Queue;
+import java.util.concurrent.*;
 
 
 /**
@@ -19,6 +18,13 @@ import java.util.concurrent.TimeUnit;
 class Node {
 
     private int ownPort;
+
+    private int leaderPort;
+
+    /**
+     * Index of the node in the network.
+     */
+    private int ownIndex;
 
     /**
      * List of all ports of the nodes in the network.
@@ -36,6 +42,19 @@ class Node {
     private LimitedResourceCrdt crdt;
 
     /**
+     * CRDT tht we have accepted but is not decided yet.
+     */
+    private LimitedResourceCrdt acceptedCrdt = null;
+
+    /**
+     * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
+     */
+    private LimitedResourceCrdt leaderMergedCrdt = null;
+
+    private int numberOfStates = 0;
+    private int numberOfAccepted = 0;
+
+    /**
      * Utils object that handels sending messages.
      */
     private final MessageHandler messageHandler;
@@ -45,33 +64,41 @@ class Node {
      */
     boolean inCoordinationPhase = false;
 
+    /**
+     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
+     */
+    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+
     public Node(int port, List<Integer> nodesPorts) {
         this.ownPort = port;
         this.messageHandler = new MessageHandler(port);
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
+
+        // Get own index in port list
+        int ownIndex = nodesPorts.indexOf(port);
+        if (ownIndex == -1) {
+            throw new IllegalArgumentException("Port not in list of nodes.");
+        }
+        this.ownIndex = ownIndex;
     }
 
     public void init() throws Exception {
         MessageReceiver messageReceiver = new MessageReceiver(ownPort);
         messageReceiver.start();
 
+        MessageProcessor messageProcessor = new MessageProcessor();
+        messageProcessor.start();
+
         CrdtMerger merger = new CrdtMerger();
 
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.scheduleAtFixedRate(merger, 10, 10, TimeUnit.SECONDS);
-    }
-
-    /**
-     * Matches the message to the appropriate method.
-     */
-    public void matchMessages(String messageStr) {
-
-        if (messageStr.startsWith("merge:")) { // CRDT merge message
-            mergeCrdts(messageStr);
-        } else {
-            System.out.println("Unknown message: " + messageStr);
-        }
     }
 
     /**
@@ -89,6 +116,10 @@ class Node {
         return crdt;
     }
 
+    public void setLeaderPort(int leaderPort) {
+        this.leaderPort = leaderPort;
+    }
+
     // --------------------------------------------------------------------------------------
     // -------------------------- INNER THREAD CLASSES --------------------------------------
     // --------------------------------------------------------------------------------------
@@ -104,6 +135,138 @@ class Node {
                 String crdtString = crdt.toString();
                 String message = "merge:" + crdtString;
                 messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+            }
+        }
+    }
+
+    /**
+     * Thread responsible for processing messages from the queue.
+     */
+    class MessageProcessor extends Thread {
+        public void run() {
+            while (true) {
+                if (!coordiantionMessageQueue.isEmpty()) {
+                    matchCoordinationMessage(coordiantionMessageQueue.poll());
+                } else if (!operationMessageQueue.isEmpty() && !inCoordinationPhase) {
+                    // Only process operation messages if we are not in the coordination phase
+                    String message = operationMessageQueue.poll();
+                    matchOperationMessage(message);
+                }
+            }
+        }
+
+        /**
+         * Matches coordination message to the appropriate method.
+         */
+        private void matchCoordinationMessage(String messageStr) {
+            MessageType messageType = MessageType.getMessageTypeFromMessageString(messageStr);
+            String crdtString, message;
+            switch (messageType) {
+                case REQL:
+                    inCoordinationPhase = true;
+                    leaderMergedCrdt = crdt; // set leader crdt first
+                    crdtString = messageStr.split(":")[1];
+                    leaderMergedCrdt.merge(new LimitedResourceCrdt(crdtString)); // merge with received crdt
+
+                    // todo dont broadcast here
+                    messageHandler.broadcast(MessageType.REQS.getTitle(), nodesPorts, nodeOutputSockets);
+                    break;
+                case REQS:
+                    inCoordinationPhase = true;
+                    message = MessageType.STATE.getTitle() + ":" + crdt.toString();
+                    messageHandler.send(message, leaderPort, nodeOutputSockets);
+                    break;
+                case STATE:
+                    receiveState(messageStr);
+                    break;
+                case ACCEPT:
+                    crdtString = messageStr.split(":")[1];
+                    acceptedCrdt = new LimitedResourceCrdt(crdtString);
+                    messageHandler.send(MessageType.ACCEPTED.getTitle(), leaderPort, nodeOutputSockets);
+                    break;
+                case ACCEPTED:
+                    receivedAccepted(messageStr);
+                    break;
+                case DECIDE:
+                    crdtString = messageStr.split(":")[1];
+                    LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
+                    crdt.merge(mergingCrdt);
+                    System.out.println("Received decided state: " + crdtString);
+                    inCoordinationPhase = false; // End of coordination phase
+                    break;
+                default:
+                    System.out.println("Unknown message: " + messageStr);
+            }
+        }
+
+        private void receiveState(String messageStr) {
+            String crdtString = messageStr.split(":")[1];
+            LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
+            leaderMergedCrdt.merge(state);
+            numberOfStates++;
+            // todo change number here
+            if (numberOfStates == nodesPorts.size() - 1) {
+
+                // Do maths here
+                int availableResources = leaderMergedCrdt.query();
+                System.out.println("Available resources: " + availableResources);
+                int resourcesPerNode = availableResources / nodesPorts.size();
+                int resourcesLeft = availableResources % nodesPorts.size();
+                int highestLowerBound = leaderMergedCrdt.getLowerCounter().stream().max(Integer::compare).get();
+                for (int i = 0; i < nodesPorts.size(); i++) {
+                    int additional = resourcesLeft > 0 ? 1 : 0;
+                    leaderMergedCrdt.setUpper(i, highestLowerBound + resourcesPerNode + additional);
+                    leaderMergedCrdt.setLower(i, highestLowerBound);
+                    resourcesLeft--;
+                }
+                System.out.println("Leader proposes state: " + leaderMergedCrdt);
+
+
+
+                String message = MessageType.ACCEPT.getTitle() + ":" + leaderMergedCrdt.toString();
+                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+                numberOfStates = 0;
+            }
+        }
+
+        private void receivedAccepted(String messageStr) {
+            if (numberOfAccepted == nodesPorts.size() - 1) {
+                String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
+                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+                numberOfAccepted = 0;
+                inCoordinationPhase = false; // End of coordination phase for leader
+            }
+        }
+
+        /**
+         * Matches operation message to the appropriate method.
+         */
+        private void matchOperationMessage(String messageStr) {
+            MessageType messageType = MessageType.getMessageTypeFromMessageString(messageStr);
+            switch (messageType) {
+                case INC:
+                    crdt.increment(ownIndex);
+                    break;
+                case DEC:
+                    boolean successful = crdt.decrement(ownIndex);
+                    if (!successful) {
+                        System.out.println("Could not decrement counter.");
+                        // todo send request for lease
+                    } else {
+                        int resourcesLeft = crdt.queryProcess(ownIndex);
+                        if (resourcesLeft == 0) {
+                            System.out.println("No resources left.");
+                            inCoordinationPhase = true;
+                            String message = MessageType.REQL.getTitle() + ":" + crdt.toString();
+                            messageHandler.send(message, leaderPort, nodeOutputSockets);
+                        }
+                    }
+                    break;
+                case MERGE:
+                    mergeCrdts(messageStr);
+                    break;
+                default:
+                    System.out.println("Unknown message: " + messageStr);
             }
         }
     }
@@ -130,7 +293,14 @@ class Node {
                 while (true) {
                     String receivedMessage = din.readUTF();
                     System.out.println("Message from Client: " + receivedMessage);
-                    matchMessages(receivedMessage);
+
+                    // Add message to correct queue
+                    MessageType messageType = MessageType.getMessageTypeFromMessageString(receivedMessage);
+                    if (messageType.isCoordinationMessage()) {
+                        coordiantionMessageQueue.add(receivedMessage);
+                    } else {
+                        operationMessageQueue.add(receivedMessage);
+                    }
 
                     if (receivedMessage.equalsIgnoreCase("bye")) {
                         System.out.println("Client left");
