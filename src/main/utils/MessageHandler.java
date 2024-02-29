@@ -1,14 +1,22 @@
-package main;
+package main.utils;
+
+import main.Node;
 
 import java.io.IOException;
 import java.net.*;
-import java.util.Collections;
 import java.util.List;
 
 import static java.util.Collections.emptyList;
 
+
+/**
+ * Class responsible for sending messages to other nodes or clients.
+ * Provides send and broadcast methods.
+ */
 public class MessageHandler {
 
+
+    Node node;
     InetAddress ip;
     private int ownPort;
     /**
@@ -16,10 +24,18 @@ public class MessageHandler {
      */
     private DatagramSocket socket;
 
-    public MessageHandler(DatagramSocket socket, int ownPort) throws UnknownHostException {
+    public MessageHandler(Node node, DatagramSocket socket, int ownPort) throws UnknownHostException {
+        this.node = node;
         this.socket = socket;
         this.ip = InetAddress.getLocalHost();
         this.ownPort = ownPort;
+    }
+
+    /**
+     * Send a message to the leader.
+     */
+    public void sendToLeader(String message) {
+        send(message, node.getLeaderPort());
     }
 
     /**
@@ -38,8 +54,8 @@ public class MessageHandler {
     /**
      * Broadcast messages to all nodes in the network.
      */
-    public void broadcast(String message, List<Integer> nodesPorts) {
-        broadcastWithIgnore(message, nodesPorts, emptyList());
+    public void broadcast(String message) {
+        broadcastWithIgnore(message, node.getNodesPorts(), emptyList());
     }
 
     /**

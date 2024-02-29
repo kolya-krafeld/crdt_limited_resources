@@ -4,7 +4,9 @@ import main.utils.Message;
 import main.utils.MessageType;
 
 import java.io.IOException;
-import java.net.*;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -14,20 +16,20 @@ public class Main {
     public static void main(String[] args) throws Exception {
         List<Integer> ports = List.of(8000, 8001, 8002);
         Node node1 = new Node(8000, ports);
-        node1.getCrdt().setUpper(0,10);
-        node1.getCrdt().setUpper(1,10);
+        node1.getCrdt().setUpper(0, 10);
+        node1.getCrdt().setUpper(1, 10);
         node1.setLeaderPort(8000);
         node1.init();
 
         Node node2 = new Node(8001, ports);
-        node2.getCrdt().setUpper(0,10);
-        node2.getCrdt().setUpper(1,10);
+        node2.getCrdt().setUpper(0, 10);
+        node2.getCrdt().setUpper(1, 10);
         node2.setLeaderPort(8000);
         node2.init();
 
         Node node3 = new Node(8002, ports);
-        node3.getCrdt().setUpper(0,10);
-        node3.getCrdt().setUpper(2,10);
+        node3.getCrdt().setUpper(0, 10);
+        node3.getCrdt().setUpper(2, 10);
         node3.setLeaderPort(8000);
         node3.init();
 
@@ -69,8 +71,31 @@ public class Main {
             ResourceRequester resourceRequester = new ResourceRequester();
             StatePrinter statePrinter = new StatePrinter();
             ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
-            executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
+            //executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
             executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
+
+            try {
+                Thread.sleep(2000);
+                for (int i = 0; i < 40; i++) {
+                    requestResource();
+                    Thread.sleep(1000);
+                }
+
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        public void requestResource() {
+            byte[] buf = "decrement".getBytes();
+            try {
+                InetAddress ip = InetAddress.getByName("localhost");
+                DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, 8001);
+                socket.send(sendPacket);
+                resourcesRequested++;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         /**
