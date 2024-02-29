@@ -1,13 +1,17 @@
 package main;
 
 import main.crdt.LimitedResourceCrdt;
+import main.utils.Message;
 import main.utils.MessageType;
 
-import java.io.*;
-import java.net.ServerSocket;
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.Socket;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.*;
 
 
@@ -17,66 +21,79 @@ import java.util.concurrent.*;
  */
 class Node {
 
-    private int ownPort;
-
-    private int leaderPort;
-
     /**
-     * Index of the node in the network.
+     * UDP socket for receiving and sending messages.
      */
-    private int ownIndex;
-
-    /**
-     * List of all ports of the nodes in the network.
-     */
-    private List<Integer> nodesPorts;
-
-    /**
-     * Maps ports to their respective output sockets.
-     */
-    private ConcurrentHashMap<Integer, Socket> nodeOutputSockets = new ConcurrentHashMap<>();
-
-    /**
-     * CRDT that only allows access to limited ressources.
-     */
-    private LimitedResourceCrdt crdt;
-
-    /**
-     * CRDT tht we have accepted but is not decided yet.
-     */
-    private LimitedResourceCrdt acceptedCrdt = null;
-
-    /**
-     * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
-     */
-    private LimitedResourceCrdt leaderMergedCrdt = null;
-
-    private int numberOfStates = 0;
-    private int numberOfAccepted = 0;
+    private DatagramSocket socket;
 
     /**
      * Utils object that handels sending messages.
      */
     private final MessageHandler messageHandler;
-
     /**
      * Flag to indicate if the node is currently in lease coordination phase.
      */
     boolean inCoordinationPhase = false;
 
     /**
+     * Is set when we have less resources than processes, so every lease needs a coordination phase.
+     */
+    boolean finalResources = false;
+
+    boolean outOfResources = false;
+
+    /**
      * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
      */
-    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
-
+    LinkedBlockingDeque<Message> operationMessageQueue = new LinkedBlockingDeque<>();
     /**
      * Queue of messages to be processed. Using concurrent queue to make it thread safe.
      */
-    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+    Queue<Message> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+    private int ownPort;
+    private int leaderPort;
+
+    /**
+     * Index of the node in the network.
+     */
+    private int ownIndex;
+    /**
+     * List of all ports of the nodes in the network.
+     */
+    private List<Integer> nodesPorts;
+    /**
+     * Maps ports to their respective output sockets.
+     */
+    private ConcurrentHashMap<Integer, Socket> nodeOutputSockets = new ConcurrentHashMap<>();
+    /**
+     * CRDT that only allows access to limited ressources.
+     */
+    private LimitedResourceCrdt crdt;
+    /**
+     * CRDT tht we have accepted but is not decided yet.
+     */
+    private LimitedResourceCrdt acceptedCrdt = null;
+    /**
+     * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
+     */
+    private LimitedResourceCrdt leaderMergedCrdt = null;
+    private int numberOfStates = 0;
+
+    /**
+     * Set of all nodes (ports) that we have received a state from.
+     */
+    private Set<Integer> statesReceivedFrom = new HashSet<>();
+
+    /**
+     * Indicates which node has send us the latest request for lease.
+     */
+    // todo: make sure this is not overwritten when we receive multiple requests
+    private int leaseRequestReceivedFrom = -1;
+
+    private int numberOfAccepted = 0;
 
     public Node(int port, List<Integer> nodesPorts) {
         this.ownPort = port;
-        this.messageHandler = new MessageHandler(port);
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
 
@@ -86,10 +103,19 @@ class Node {
             throw new IllegalArgumentException("Port not in list of nodes.");
         }
         this.ownIndex = ownIndex;
+
+        // Open UDP port
+        try {
+            socket = new DatagramSocket(port);
+            this.messageHandler = new MessageHandler(socket, port);
+        } catch (Exception e) {
+            System.out.println("Could not open socket!");
+            throw new RuntimeException(e);
+        }
     }
 
     public void init() throws Exception {
-        MessageReceiver messageReceiver = new MessageReceiver(ownPort);
+        MessageReceiver messageReceiver = new MessageReceiver();
         messageReceiver.start();
 
         MessageProcessor messageProcessor = new MessageProcessor();
@@ -104,9 +130,7 @@ class Node {
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */
-    private void mergeCrdts(String messageStr) {
-        String[] parts = messageStr.split(":");
-        String crdtString = parts[1];
+    private void mergeCrdts(String crdtString) {
         LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
         crdt.merge(mergingCrdt);
         System.out.println("Merged crdt: " + crdt);
@@ -134,7 +158,7 @@ class Node {
                 System.out.println("Broadcasting merge.");
                 String crdtString = crdt.toString();
                 String message = "merge:" + crdtString;
-                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+                messageHandler.broadcast(message, nodesPorts);
             }
         }
     }
@@ -149,8 +173,7 @@ class Node {
                     matchCoordinationMessage(coordiantionMessageQueue.poll());
                 } else if (!operationMessageQueue.isEmpty() && !inCoordinationPhase) {
                     // Only process operation messages if we are not in the coordination phase
-                    String message = operationMessageQueue.poll();
-                    matchOperationMessage(message);
+                    matchOperationMessage(operationMessageQueue.poll());
                 }
             }
         }
@@ -158,81 +181,165 @@ class Node {
         /**
          * Matches coordination message to the appropriate method.
          */
-        private void matchCoordinationMessage(String messageStr) {
-            MessageType messageType = MessageType.getMessageTypeFromMessageString(messageStr);
-            String crdtString, message;
-            switch (messageType) {
+        private void matchCoordinationMessage(Message message) {
+            String crdtString, outMessage;
+            switch (message.getType()) {
                 case REQL:
                     inCoordinationPhase = true;
+                    leaseRequestReceivedFrom = message.getPort();
                     leaderMergedCrdt = crdt; // set leader crdt first
-                    crdtString = messageStr.split(":")[1];
+                    crdtString = message.getContent();
                     leaderMergedCrdt.merge(new LimitedResourceCrdt(crdtString)); // merge with received crdt
 
                     // todo dont broadcast here
-                    messageHandler.broadcast(MessageType.REQS.getTitle(), nodesPorts, nodeOutputSockets);
+                    messageHandler.broadcast(MessageType.REQS.getTitle(), nodesPorts);
                     break;
                 case REQS:
                     inCoordinationPhase = true;
-                    message = MessageType.STATE.getTitle() + ":" + crdt.toString();
-                    messageHandler.send(message, leaderPort, nodeOutputSockets);
+                    outMessage = MessageType.STATE.getTitle() + ":" + crdt.toString();
+                    messageHandler.send(outMessage, leaderPort);
                     break;
                 case STATE:
-                    receiveState(messageStr);
+                    receiveState(message);
                     break;
                 case ACCEPT:
-                    crdtString = messageStr.split(":")[1];
-                    acceptedCrdt = new LimitedResourceCrdt(crdtString);
-                    messageHandler.send(MessageType.ACCEPTED.getTitle(), leaderPort, nodeOutputSockets);
+                    acceptedCrdt = new LimitedResourceCrdt(message.getContent());
+                    messageHandler.send(MessageType.ACCEPTED.getTitle(), leaderPort);
                     break;
                 case ACCEPTED:
-                    receivedAccepted(messageStr);
+                    receivedAccepted(message.getContent());
                     break;
                 case DECIDE:
-                    crdtString = messageStr.split(":")[1];
-                    LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
-                    crdt.merge(mergingCrdt);
-                    System.out.println("Received decided state: " + crdtString);
-                    inCoordinationPhase = false; // End of coordination phase
+                    receiveDecide(message);
                     break;
                 default:
-                    System.out.println("Unknown message: " + messageStr);
+                    System.out.println("Unknown message: " + message);
             }
         }
 
-        private void receiveState(String messageStr) {
-            String crdtString = messageStr.split(":")[1];
-            LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
+        private void receiveDecide(Message message) {
+            LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(message.getContent());
+
+            // Check to see how many resources are left
+            int assignedResourcesToMe = mergingCrdt.queryProcess(ownIndex);
+            int resourcesLeftForLeader = mergingCrdt.queryProcess(nodesPorts.indexOf(leaderPort));
+
+            if (resourcesLeftForLeader == 0) {
+                System.out.println("Leader has no resources left. Therefore we are out of resources now!");
+                outOfResources = true;
+            } else if (assignedResourcesToMe == 0) {
+                System.out.println("No resources assigned to me. We are working on the final resources now.");
+                finalResources = true;
+            }
+
+            crdt.merge(mergingCrdt);
+            System.out.println("Received decided state: " + message.getContent());
+            inCoordinationPhase = false; // End of coordination phase
+        }
+
+        /**
+         * Leader receives state message from follower.
+         */
+        private void receiveState(Message message) {
+            LimitedResourceCrdt state = new LimitedResourceCrdt(message.getContent());
             leaderMergedCrdt.merge(state);
             numberOfStates++;
+            statesReceivedFrom.add(message.getPort());
+
             // todo change number here
             if (numberOfStates == nodesPorts.size() - 1) {
 
-                // Do maths here
-                int availableResources = leaderMergedCrdt.query();
-                System.out.println("Available resources: " + availableResources);
-                int resourcesPerNode = availableResources / nodesPorts.size();
-                int resourcesLeft = availableResources % nodesPorts.size();
-                int highestLowerBound = leaderMergedCrdt.getLowerCounter().stream().max(Integer::compare).get();
-                for (int i = 0; i < nodesPorts.size(); i++) {
-                    int additional = resourcesLeft > 0 ? 1 : 0;
-                    leaderMergedCrdt.setUpper(i, highestLowerBound + resourcesPerNode + additional);
-                    leaderMergedCrdt.setLower(i, highestLowerBound);
-                    resourcesLeft--;
-                }
+                reassignLeases();
                 System.out.println("Leader proposes state: " + leaderMergedCrdt);
 
 
+                String outMessage = MessageType.ACCEPT.getTitle() + ":" + leaderMergedCrdt.toString();
+                messageHandler.broadcast(outMessage, nodesPorts);
 
-                String message = MessageType.ACCEPT.getTitle() + ":" + leaderMergedCrdt.toString();
-                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+                // Reset state variables
                 numberOfStates = 0;
+                statesReceivedFrom.clear();
+            }
+        }
+
+        /**
+         * Reassigns leases to all nodes that we got a state message from.
+         */
+        private void reassignLeases() {
+
+            // Only get the available resources from nodes that we got a state from. We assume that all other nodes have
+            // already given away all their resources.
+            int availableResources = 0;
+            for (int i = 0; i < nodesPorts.size(); i++) {
+                if (i == ownIndex || statesReceivedFrom.contains(nodesPorts.get(i))) {
+                    availableResources += leaderMergedCrdt.queryProcess(i);
+                }
+            }
+
+            System.out.println("Available resources: " + availableResources);
+            int highestLowerBound = leaderMergedCrdt.getLowerCounter().stream().max(Integer::compare).get();
+
+            int amountOfStates = statesReceivedFrom.size() + 1; // +1 for the leader
+
+            if (availableResources >= amountOfStates) {
+                // We have enough resources to give to all nodes that we got a state from.
+                int resourcesPerNode = availableResources / amountOfStates;
+                int resourcesLeft = availableResources % amountOfStates;
+
+                for (int i = 0; i < nodesPorts.size(); i++) {
+                    if (i == ownIndex || statesReceivedFrom.contains(nodesPorts.get(i))) {
+                        int additional = resourcesLeft > 0 ? 1 : 0; // Add one additional resource to the first nodes
+                        leaderMergedCrdt.setUpper(i, highestLowerBound + resourcesPerNode + additional);
+                        leaderMergedCrdt.setLower(i, highestLowerBound);
+                        resourcesLeft--;
+                    }
+                }
+            } else {
+                // We have less resources than nodes that we got a state from. We need to coordinate from now on for every lease.
+                // We assign the remaining leases to the leader for this time.
+
+                if (finalResources) {
+                    // We are already in final resource mode. This means one node has asked for one resource.
+                    int indexOfRequester = nodesPorts.indexOf(leaseRequestReceivedFrom);
+
+                    int leaderUpperCounter = leaderMergedCrdt.getUpperCounter().get(ownIndex);
+
+                    for (int i = 0; i < nodesPorts.size(); i++) {
+                        if (i == ownIndex || statesReceivedFrom.contains(nodesPorts.get(i))) {
+                            leaderMergedCrdt.setUpper(i, leaderUpperCounter);
+                            leaderMergedCrdt.setLower(i, leaderUpperCounter);
+                        }
+                    }
+
+                    // Give requesting process one lease
+                    leaderMergedCrdt.setUpper(indexOfRequester, leaderUpperCounter + 1);
+                    availableResources--;
+
+                    // Assign the remaining resources to the leader
+                    leaderMergedCrdt.setUpper(ownIndex, leaderUpperCounter + availableResources);
+                } else {
+                    finalResources = true;
+
+                    for (int i = 0; i < nodesPorts.size(); i++) {
+                        if (i == ownIndex || statesReceivedFrom.contains(nodesPorts.get(i))) {
+                            leaderMergedCrdt.setUpper(i, highestLowerBound);
+                            leaderMergedCrdt.setLower(i, highestLowerBound);
+                        }
+                    }
+
+                    // Assign the remaining resources to the leader
+                    leaderMergedCrdt.setUpper(ownIndex, highestLowerBound + availableResources);
+                }
+
             }
         }
 
         private void receivedAccepted(String messageStr) {
+            numberOfAccepted++;
+            // todo change number here
             if (numberOfAccepted == nodesPorts.size() - 1) {
                 String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
-                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
+                messageHandler.broadcast(message, nodesPorts);
                 numberOfAccepted = 0;
                 inCoordinationPhase = false; // End of coordination phase for leader
             }
@@ -241,32 +348,50 @@ class Node {
         /**
          * Matches operation message to the appropriate method.
          */
-        private void matchOperationMessage(String messageStr) {
-            MessageType messageType = MessageType.getMessageTypeFromMessageString(messageStr);
-            switch (messageType) {
+        private void matchOperationMessage(Message message) {
+            switch (message.getType()) {
                 case INC:
                     crdt.increment(ownIndex);
                     break;
                 case DEC:
-                    boolean successful = crdt.decrement(ownIndex);
-                    if (!successful) {
-                        System.out.println("Could not decrement counter.");
-                        // todo send request for lease
-                    } else {
-                        int resourcesLeft = crdt.queryProcess(ownIndex);
-                        if (resourcesLeft == 0) {
-                            System.out.println("No resources left.");
-                            inCoordinationPhase = true;
-                            String message = MessageType.REQL.getTitle() + ":" + crdt.toString();
-                            messageHandler.send(message, leaderPort, nodeOutputSockets);
-                        }
-                    }
+                    decrementCrdt(message);
                     break;
                 case MERGE:
-                    mergeCrdts(messageStr);
+                    mergeCrdts(message.getContent());
                     break;
                 default:
-                    System.out.println("Unknown message: " + messageStr);
+                    System.out.println("Unknown message: " + message.getContent());
+            }
+        }
+
+        private void decrementCrdt(Message message) {
+            if (outOfResources) {
+                System.out.println("Out of resources. Cannot decrement counter.");
+                return;
+            }
+
+            if (finalResources) {
+                // We are working on the final resources. We need to ask the leader for every new lease.
+                inCoordinationPhase = true;
+                String outMessage = MessageType.REQL.getTitle() + ":" + crdt.toString();
+                messageHandler.send(outMessage, leaderPort);
+
+                // Put message right back at the front of the queue, so it will be processed next.
+                operationMessageQueue.addFirst(message);
+            } else {
+                boolean successful = crdt.decrement(ownIndex);
+                if (!successful) {
+                    System.out.println("Could not decrement counter.");
+                    // todo send request for lease
+                } else {
+                    int resourcesLeft = crdt.queryProcess(ownIndex);
+                    if (resourcesLeft == 0) {
+                        System.out.println("No resources left.");
+                        inCoordinationPhase = true;
+                        String outMessage = MessageType.REQL.getTitle() + ":" + crdt.toString();
+                        messageHandler.send(outMessage, leaderPort);
+                    }
+                }
             }
         }
     }
@@ -275,53 +400,33 @@ class Node {
      * Thread responsible for receiving messages from other nodes or clients
      */
     class MessageReceiver extends Thread {
-        // Receiving socket
-        private final ServerSocket serverSocket;
-
-        public MessageReceiver(int port) throws IOException {
-            this.serverSocket = new ServerSocket(port);
-        }
 
         public void run() {
-            Socket clientSocket = null;
-            try {
-                System.out.println("Receiver created!");
-                clientSocket = serverSocket.accept();
-                System.out.println("Client connected");
+            byte[] receive;
+            DatagramPacket receivePacket;
 
-                DataInputStream din = new DataInputStream(clientSocket.getInputStream());
+            try {
                 while (true) {
-                    String receivedMessage = din.readUTF();
+                    // Clear the buffer before every message.
+                    receive = new byte[65535];
+                    receivePacket = new DatagramPacket(receive, receive.length);
+
+                    // Receive message
+                    socket.receive(receivePacket);
+
+                    String receivedMessage = new String(receivePacket.getData(), 0, receivePacket.getLength());
                     System.out.println("Message from Client: " + receivedMessage);
+                    Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                     // Add message to correct queue
-                    MessageType messageType = MessageType.getMessageTypeFromMessageString(receivedMessage);
-                    if (messageType.isCoordinationMessage()) {
-                        coordiantionMessageQueue.add(receivedMessage);
+                    if (message.getType().isCoordinationMessage()) {
+                        coordiantionMessageQueue.add(message);
                     } else {
-                        operationMessageQueue.add(receivedMessage);
-                    }
-
-                    if (receivedMessage.equalsIgnoreCase("bye")) {
-                        System.out.println("Client left");
-                        clientSocket.close();
-                        serverSocket.close();
-                        break;
+                        operationMessageQueue.add(message);
                     }
                 }
-            } catch (Exception e) {
+            } catch (IOException e) {
                 e.printStackTrace();
-            } finally {
-                try {
-                    if (clientSocket != null)
-                        clientSocket.close();
-
-                    if (serverSocket != null)
-                        serverSocket.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
             }
         }
     }

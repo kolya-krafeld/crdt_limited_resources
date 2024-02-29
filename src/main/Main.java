@@ -1,8 +1,7 @@
 package main;
 
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.net.Socket;
+import java.net.*;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,22 +60,24 @@ public class Main {
 
         private final Node node1;
         private final Node node2;
-        private final Socket socket;
+        private final DatagramSocket socket;
 
         public CrdtChanger2(Node node1, Node node2) {
             this.node1 = node1;
             this.node2 = node2;
             try {
-                this.socket = new Socket("127.0.0.1", 8001);
+                this.socket = new DatagramSocket(8080);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
 
         public void run() {
+            byte[] buf = "decrement".getBytes();
             try {
-                DataOutputStream dout = new DataOutputStream(socket.getOutputStream());
-                dout.writeUTF("decrement");
+                InetAddress ip = InetAddress.getByName("localhost");
+                DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, 8001);
+                socket.send(sendPacket);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
