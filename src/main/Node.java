@@ -14,6 +14,8 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.*;
 
+import static java.util.Arrays.asList;
+
 
 /**
  * Node in the network. Connects to other nodes and clients.
@@ -38,7 +40,7 @@ class Node {
     /**
      * Is set when we have less resources than processes, so every lease needs a coordination phase.
      */
-    boolean finalResources = false;
+    boolean finalResources = false; //todo might not be needed
 
     boolean outOfResources = false;
 
@@ -61,10 +63,7 @@ class Node {
      * List of all ports of the nodes in the network.
      */
     private List<Integer> nodesPorts;
-    /**
-     * Maps ports to their respective output sockets.
-     */
-    private ConcurrentHashMap<Integer, Socket> nodeOutputSockets = new ConcurrentHashMap<>();
+
     /**
      * CRDT that only allows access to limited ressources.
      */
@@ -182,17 +181,18 @@ class Node {
          * Matches coordination message to the appropriate method.
          */
         private void matchCoordinationMessage(Message message) {
-            String crdtString, outMessage;
+            String outMessage;
             switch (message.getType()) {
                 case REQL:
                     inCoordinationPhase = true;
                     leaseRequestReceivedFrom = message.getPort();
                     leaderMergedCrdt = crdt; // set leader crdt first
-                    crdtString = message.getContent();
-                    leaderMergedCrdt.merge(new LimitedResourceCrdt(crdtString)); // merge with received crdt
 
-                    // todo dont broadcast here
-                    messageHandler.broadcast(MessageType.REQS.getTitle(), nodesPorts);
+                    // Send Request State to all other nodes
+                    messageHandler.broadcastWithIgnore(MessageType.REQS.getTitle(), nodesPorts, asList(leaseRequestReceivedFrom));
+
+                    // Receiving request lease is like receiving state from that node
+                    receiveState(message);
                     break;
                 case REQS:
                     inCoordinationPhase = true;
@@ -224,7 +224,7 @@ class Node {
             int assignedResourcesToMe = mergingCrdt.queryProcess(ownIndex);
             int resourcesLeftForLeader = mergingCrdt.queryProcess(nodesPorts.indexOf(leaderPort));
 
-            if (resourcesLeftForLeader == 0) {
+            if (resourcesLeftForLeader == 0 && assignedResourcesToMe == 0) {
                 System.out.println("Leader has no resources left. Therefore we are out of resources now!");
                 outOfResources = true;
             } else if (assignedResourcesToMe == 0) {
@@ -302,21 +302,24 @@ class Node {
                     // We are already in final resource mode. This means one node has asked for one resource.
                     int indexOfRequester = nodesPorts.indexOf(leaseRequestReceivedFrom);
 
-                    int leaderUpperCounter = leaderMergedCrdt.getUpperCounter().get(ownIndex);
+                    int highestUpperCounter = leaderMergedCrdt.getUpperCounter().stream().max(Integer::compare).get();
 
                     for (int i = 0; i < nodesPorts.size(); i++) {
                         if (i == ownIndex || statesReceivedFrom.contains(nodesPorts.get(i))) {
-                            leaderMergedCrdt.setUpper(i, leaderUpperCounter);
-                            leaderMergedCrdt.setLower(i, leaderUpperCounter);
+                            leaderMergedCrdt.setUpper(i, highestUpperCounter);
+                            leaderMergedCrdt.setLower(i, highestUpperCounter);
                         }
                     }
 
-                    // Give requesting process one lease
-                    leaderMergedCrdt.setUpper(indexOfRequester, leaderUpperCounter + 1);
-                    availableResources--;
+                    if (availableResources > 0) {
+                        // Give requesting process one lease
+                        leaderMergedCrdt.setUpper(indexOfRequester, highestUpperCounter + 1);
+                        availableResources--;
 
-                    // Assign the remaining resources to the leader
-                    leaderMergedCrdt.setUpper(ownIndex, leaderUpperCounter + availableResources);
+                        // Assign the remaining resources to the leader
+                        leaderMergedCrdt.setUpper(ownIndex, highestUpperCounter + availableResources);
+                    }
+
                 } else {
                     finalResources = true;
 
@@ -367,10 +370,15 @@ class Node {
         private void decrementCrdt(Message message) {
             if (outOfResources) {
                 System.out.println("Out of resources. Cannot decrement counter.");
+
+                // Notify client about unsuccessful decrement
+                messageHandler.send(MessageType.DENYR.getTitle(), message.getPort());
                 return;
             }
 
-            if (finalResources) {
+            int resourcesLeft = crdt.queryProcess(ownIndex);
+
+            if (resourcesLeft == 0 && finalResources) {
                 // We are working on the final resources. We need to ask the leader for every new lease.
                 inCoordinationPhase = true;
                 String outMessage = MessageType.REQL.getTitle() + ":" + crdt.toString();
@@ -378,13 +386,20 @@ class Node {
 
                 // Put message right back at the front of the queue, so it will be processed next.
                 operationMessageQueue.addFirst(message);
+            } else if (finalResources) {
+                crdt.decrement(ownIndex);
+                // Notify client about successful decrement
+                messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
             } else {
                 boolean successful = crdt.decrement(ownIndex);
                 if (!successful) {
                     System.out.println("Could not decrement counter.");
                     // todo send request for lease
                 } else {
-                    int resourcesLeft = crdt.queryProcess(ownIndex);
+                    // Notify client about successful decrement
+                    messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
+
+                    resourcesLeft = crdt.queryProcess(ownIndex);
                     if (resourcesLeft == 0) {
                         System.out.println("No resources left.");
                         inCoordinationPhase = true;

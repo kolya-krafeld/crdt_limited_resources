@@ -1,10 +1,11 @@
 package main;
 
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.*;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+
+import static java.util.Collections.emptyList;
 
 public class MessageHandler {
 
@@ -15,16 +16,15 @@ public class MessageHandler {
      */
     private DatagramSocket socket;
 
-    public MessageHandler(int ownPort) {
-        this.ownPort = ownPort;
-    }
-
     public MessageHandler(DatagramSocket socket, int ownPort) throws UnknownHostException {
         this.socket = socket;
         this.ip = InetAddress.getLocalHost();
         this.ownPort = ownPort;
     }
 
+    /**
+     * Send a message to a specific node.
+     */
     public void send(String message, int port) {
         byte[] buf = message.getBytes();
         try {
@@ -36,60 +36,25 @@ public class MessageHandler {
     }
 
     /**
-     * Send a message to a specific node.
-     */
-    public void send(String message, int port, ConcurrentHashMap<Integer, Socket> nodeOutputSockets) {
-        try {
-            Socket socket;
-            if (nodeOutputSockets.containsKey(port)) {
-                socket = nodeOutputSockets.get(port);
-            } else {
-                socket = new Socket("127.0.0.1", port);
-                nodeOutputSockets.put(port, socket);
-            }
-            DataOutputStream dout = new DataOutputStream(socket.getOutputStream());
-            dout.writeUTF(message);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    /**
      * Broadcast messages to all nodes in the network.
      */
     public void broadcast(String message, List<Integer> nodesPorts) {
+        broadcastWithIgnore(message, nodesPorts, emptyList());
+    }
+
+    /**
+     * Send a message to all nodes in the network except for the ones in the list and yourself.
+     */
+    public void broadcastWithIgnore(String message, List<Integer> nodesPorts, List<Integer> ignorePorts) {
         byte[] buf = message.getBytes();
         DatagramPacket sendPacket;
         for (int port : nodesPorts) {
-            if (port != ownPort) { // No need to broadcast to yourself
+            if (port != ownPort && !ignorePorts.contains(port)) { // No need to broadcast to yourself and to the nodes in the ignore list
                 try {
                     sendPacket = new DatagramPacket(buf, buf.length, ip, port);
                     socket.send(sendPacket);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
-                }
-            }
-        }
-    }
-
-    /**
-     * Broadcast messages to all nodes in the network.
-     */
-    public void broadcast(String message, List<Integer> nodesPorts, ConcurrentHashMap<Integer, Socket> nodeOutputSockets) {
-        for (int port : nodesPorts) {
-            if (port != ownPort) { // No need to broadcast to yourself
-                try {
-                    Socket socket;
-                    if (nodeOutputSockets.containsKey(port)) {
-                        socket = nodeOutputSockets.get(port);
-                    } else {
-                        socket = new Socket("127.0.0.1", port);
-                        nodeOutputSockets.put(port, socket);
-                    }
-                    DataOutputStream dout = new DataOutputStream(socket.getOutputStream());
-                    dout.writeUTF(message);
-                } catch (Exception e) {
-                    e.printStackTrace();
                 }
             }
         }

@@ -2,15 +2,20 @@ package main.utils;
 
 public enum MessageType {
 
+    // Peer-to-peer messages
     MERGE("merge", false),
-    INC("increment", false),
-    DEC("decrement", false),
     REQL("request-lease", true),
     REQS("request-state", true),
     STATE("state", true),
     ACCEPT("accept", true),
     ACCEPTED("accepted", true),
-    DECIDE("decide", true);
+    DECIDE("decide", true),
+
+    // Client messages
+    INC("increment", false),
+    DEC("decrement", false),
+    APPROVER("approve-resource", false),
+    DENYR("deny-resource", false);
 
 
     private final String title;
@@ -19,18 +24,6 @@ public enum MessageType {
     private MessageType(String title, boolean coordinationMessage) {
         this.title = title;
         this.coordinationMessage = coordinationMessage;
-    }
-
-    /**
-     * Some messages contain ':', others don't. Get message type from whole message string or only substring before ':'.
-     */
-    public static MessageType getMessageTypeFromMessageString(String messageStr) {
-        if (messageStr.contains(":")) {
-            String[] parts = messageStr.split(":");
-            return MessageType.titleToMessageType(parts[0]);
-        } else {
-            return MessageType.titleToMessageType(messageStr);
-        }
     }
 
     public static MessageType titleToMessageType(String title) {

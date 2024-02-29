@@ -61,8 +61,13 @@ public class LimitedResourceCrdt implements Crdt {
         upperCounter.set(index, upperCounter.get(index) + 1);
     }
 
-    public void setUpper(int index, int value) {
+    public boolean setUpper(int index, int value) {
+        if (value < upperCounter.get(index) || value < lowerCounter.get(index)) {
+            return false;
+        }
+
         upperCounter.set(index, value);
+        return true;
     }
 
     /**
