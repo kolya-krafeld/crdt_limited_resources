@@ -39,12 +39,35 @@ public class LimitedResourceCrdt implements Crdt {
         this.numberOfProcesses = upperCounter.size();
     }
 
+    /**
+     * Return the number of resources that are still left across all processes.
+     */
+    public int query() {
+        int sum = 0;
+        for (int i = 0; i < numberOfProcesses; i++) {
+            sum += upperCounter.get(i) - lowerCounter.get(i);
+        }
+        return sum;
+    }
+
+    /**
+     * Return the number of resources that are still left for a specific process.
+     */
+    public int queryProcess(int processIndex) {
+        return upperCounter.get(processIndex) - lowerCounter.get(processIndex);
+    }
+
     public void increment(int index) {
         upperCounter.set(index, upperCounter.get(index) + 1);
     }
 
-    public void setUpper(int index, int value) {
+    public boolean setUpper(int index, int value) {
+        if (value < upperCounter.get(index) || value < lowerCounter.get(index)) {
+            return false;
+        }
+
         upperCounter.set(index, value);
+        return true;
     }
 
     /**

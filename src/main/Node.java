@@ -1,34 +1,67 @@
 package main;
 
 import main.crdt.LimitedResourceCrdt;
+import main.jobs.CrdtMerger;
+import main.jobs.MessageProcessor;
+import main.jobs.MessageReceiver;
+import main.utils.Message;
+import main.utils.MessageHandler;
 
-import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.DatagramSocket;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.Queue;
+import java.util.concurrent.*;
 
 
 /**
  * Node in the network. Connects to other nodes and clients.
  * Responsible for its own CRDT.
  */
-class Node {
+public class Node {
+
+    /**
+     * UDP socket for receiving and sending messages.
+     */
+    public DatagramSocket socket;
+
+    /**
+     * Utils object that handels sending messages.
+     */
+    private final MessageHandler messageHandler;
+    /**
+     * Flag to indicate if the node is currently in lease coordination phase.
+     */
+    boolean inCoordinationPhase = false;
+
+    /**
+     * Is set when we have less resources than processes, so every lease needs a coordination phase.
+     */
+    boolean finalResources = false; //todo might not be needed
+
+    boolean outOfResources = false;
+
+    /**
+     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
+     */
+    public LinkedBlockingDeque<Message> operationMessageQueue = new LinkedBlockingDeque<>();
+
+    /**
+     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
+     */
+    public Queue<Message> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+
 
     private int ownPort;
+    private int leaderPort;
 
+    /**
+     * Index of the node in the network.
+     */
+    private int ownIndex;
     /**
      * List of all ports of the nodes in the network.
      */
     private List<Integer> nodesPorts;
-
-    /**
-     * Maps ports to their respective output sockets.
-     */
-    private ConcurrentHashMap<Integer, Socket> nodeOutputSockets = new ConcurrentHashMap<>();
 
     /**
      * CRDT that only allows access to limited ressources.
@@ -36,123 +69,114 @@ class Node {
     private LimitedResourceCrdt crdt;
 
     /**
-     * Utils object that handels sending messages.
+     * CRDT that was accepted in the last coordination phase.
      */
-    private final MessageHandler messageHandler;
-
-    /**
-     * Flag to indicate if the node is currently in lease coordination phase.
-     */
-    boolean inCoordinationPhase = false;
+    private LimitedResourceCrdt acceptedCrdt = null;
 
     public Node(int port, List<Integer> nodesPorts) {
         this.ownPort = port;
-        this.messageHandler = new MessageHandler(port);
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
+
+        // Get own index in port list
+        int ownIndex = nodesPorts.indexOf(port);
+        if (ownIndex == -1) {
+            throw new IllegalArgumentException("Port not in list of nodes.");
+        }
+        this.ownIndex = ownIndex;
+
+        // Open UDP port
+        try {
+            socket = new DatagramSocket(port);
+            this.messageHandler = new MessageHandler(this, socket, port);
+        } catch (Exception e) {
+            System.out.println("Could not open socket!");
+            throw new RuntimeException(e);
+        }
     }
 
-    public void init() throws Exception {
-        MessageReceiver messageReceiver = new MessageReceiver(ownPort);
+    /**
+     * Starts the node.
+     */
+    public void init() {
+        MessageReceiver messageReceiver = new MessageReceiver(this);
         messageReceiver.start();
 
-        CrdtMerger merger = new CrdtMerger();
+        MessageProcessor messageProcessor = new MessageProcessor(this, messageHandler);
+        messageProcessor.start();
+
+        CrdtMerger merger = new CrdtMerger(this, messageHandler);
 
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.scheduleAtFixedRate(merger, 10, 10, TimeUnit.SECONDS);
     }
 
-    /**
-     * Matches the message to the appropriate method.
-     */
-    public void matchMessages(String messageStr) {
-
-        if (messageStr.startsWith("merge:")) { // CRDT merge message
-            mergeCrdts(messageStr);
-        } else {
-            System.out.println("Unknown message: " + messageStr);
-        }
-    }
 
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */
-    private void mergeCrdts(String messageStr) {
-        String[] parts = messageStr.split(":");
-        String crdtString = parts[1];
+    public void mergeCrdts(String crdtString) {
         LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
         crdt.merge(mergingCrdt);
         System.out.println("Merged crdt: " + crdt);
     }
 
+
     public LimitedResourceCrdt getCrdt() {
         return crdt;
     }
 
-    // --------------------------------------------------------------------------------------
-    // -------------------------- INNER THREAD CLASSES --------------------------------------
-    // --------------------------------------------------------------------------------------
+    // GETTERS & SETTERS
 
-    /**
-     * Thread responsible for broadcasting our current CRDT state to all nodes in the network.
-     */
-    class CrdtMerger implements Runnable {
-
-        public void run() {
-            if (!inCoordinationPhase) {
-                System.out.println("Broadcasting merge.");
-                String crdtString = crdt.toString();
-                String message = "merge:" + crdtString;
-                messageHandler.broadcast(message, nodesPorts, nodeOutputSockets);
-            }
-        }
+    public boolean isLeader() {
+        return ownPort == leaderPort;
     }
 
-    /**
-     * Thread responsible for receiving messages from other nodes or clients
-     */
-    class MessageReceiver extends Thread {
-        // Receiving socket
-        private final ServerSocket serverSocket;
+    public void setLeaderPort(int leaderPort) {
+        this.leaderPort = leaderPort;
+    }
 
-        public MessageReceiver(int port) throws IOException {
-            this.serverSocket = new ServerSocket(port);
-        }
+    public void setInCoordinationPhase(boolean inCoordinationPhase) {
+        this.inCoordinationPhase = inCoordinationPhase;
+    }
 
-        public void run() {
-            Socket clientSocket = null;
-            try {
-                System.out.println("Receiver created!");
-                clientSocket = serverSocket.accept();
-                System.out.println("Client connected");
+    public boolean isInCoordinationPhase() {
+        return inCoordinationPhase;
+    }
 
-                DataInputStream din = new DataInputStream(clientSocket.getInputStream());
-                while (true) {
-                    String receivedMessage = din.readUTF();
-                    System.out.println("Message from Client: " + receivedMessage);
-                    matchMessages(receivedMessage);
+    public boolean isFinalResources() {
+        return finalResources;
+    }
 
-                    if (receivedMessage.equalsIgnoreCase("bye")) {
-                        System.out.println("Client left");
-                        clientSocket.close();
-                        serverSocket.close();
-                        break;
-                    }
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                try {
-                    if (clientSocket != null)
-                        clientSocket.close();
+    public int getOwnPort() {
+        return ownPort;
+    }
 
-                    if (serverSocket != null)
-                        serverSocket.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+    public List<Integer> getNodesPorts() {
+        return nodesPorts;
+    }
 
-            }
-        }
+    public int getLeaderPort() {
+        return leaderPort;
+    }
+
+    public int getOwnIndex() {
+        return ownIndex;
+    }
+
+    public void setOutOfResources(boolean outOfResources) {
+        this.outOfResources = outOfResources;
+    }
+
+    public void setFinalResources(boolean finalResources) {
+        this.finalResources = finalResources;
+    }
+
+    public boolean isOutOfResources() {
+        return outOfResources;
+    }
+
+    public void setAcceptedCrdt(LimitedResourceCrdt acceptedCrdt) {
+        this.acceptedCrdt = acceptedCrdt;
     }
 }
