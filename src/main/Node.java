@@ -64,6 +64,11 @@ public class Node {
     private List<Integer> nodesPorts;
 
     /**
+     * Size of a quorum with the current amount of nodes.
+     */
+    private int quorumSize;
+
+    /**
      * CRDT that only allows access to limited ressources.
      */
     private LimitedResourceCrdt crdt;
@@ -77,6 +82,8 @@ public class Node {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
+
+        this.quorumSize = (nodesPorts.size() / 2) + 1;
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -178,5 +185,9 @@ public class Node {
 
     public void setAcceptedCrdt(LimitedResourceCrdt acceptedCrdt) {
         this.acceptedCrdt = acceptedCrdt;
+    }
+
+    public int getQuorumSize() {
+        return quorumSize;
     }
 }

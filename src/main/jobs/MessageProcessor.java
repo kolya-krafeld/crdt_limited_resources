@@ -40,6 +40,15 @@ public class MessageProcessor extends Thread {
      */
     private List<Integer> leaseRequestFrom = new ArrayList<>();
 
+    /**
+     * Timestamp when the last request for state/accept was broadcasted.
+     * Used to see whether we need to wait for more messages.
+     */
+    private long lastRequestStateSent = 0;
+    private long lastAcceptSent = 0;
+
+    private final long messageWaitTime = 100;
+
     public MessageProcessor(Node node, MessageHandler messageHandler) {
         this.node = node;
         this.messageHandler = messageHandler;
@@ -130,6 +139,7 @@ public class MessageProcessor extends Thread {
                 leaseRequestFrom.clear();
 
                 // Send Request State to all other nodes
+                this.lastRequestStateSent = System.currentTimeMillis();
                 messageHandler.broadcastWithIgnore(MessageType.REQS.getTitle(), node.getNodesPorts(), leaseRequestFrom);
             }
 
@@ -164,16 +174,14 @@ public class MessageProcessor extends Thread {
             leaderMergedCrdt.merge(state);
             statesReceivedFrom.add(message.getPort());
 
-            // todo change number here + timeout
-            // States received from + 1 for the leader
-            if (statesReceivedFrom.size() + 1 == node.getNodesPorts().size()) {
-
+            if (isReadyToProcessNextCoordinationPhase(statesReceivedFrom.size(), lastRequestStateSent)) {
                 // Reassign leases
                 reassignLeases();
                 System.out.println("Leader proposes state: " + leaderMergedCrdt);
 
 
                 // Send ACCEPT to all nodes
+                this.lastAcceptSent = System.currentTimeMillis();
                 String outMessage = MessageType.ACCEPT.getTitle() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(outMessage);
 
@@ -181,6 +189,27 @@ public class MessageProcessor extends Thread {
                 statesReceivedFrom.clear();
             }
         }
+    }
+
+    /**
+     * Decides whether we are ready to process next coordination phase: e.g. after request state or accept.
+     * Case 1: We have received STATE/ACCEPTED message from all nodes.
+     * Case 2: We have received STATE/ACCEPTED message from a quorum of nodes and we have passed the wait time.
+     */
+    private boolean isReadyToProcessNextCoordinationPhase(int messagesReceivedFrom, long lastMessageSent) {
+        // +1 is for leader
+        if (messagesReceivedFrom + 1 == node.getNodesPorts().size()) {
+            System.out.println("Received messages from all nodes.");
+            return true;
+        }
+        // +1 is for leader
+        if (messagesReceivedFrom + 1 >= node.getQuorumSize()
+                && System.currentTimeMillis() > messageWaitTime + lastMessageSent) {
+            System.out.println("Received messages from quorum of nodes after wait time had passed.");
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -201,9 +230,7 @@ public class MessageProcessor extends Thread {
      */
     private void receivedAccepted(String messageStr) {
         numberOfAccepted++;
-        // todo change number here
-        // When number of accepted + 1 for leader is quorum, the state is decided
-        if (numberOfAccepted + 1 == node.getNodesPorts().size()) {
+        if (isReadyToProcessNextCoordinationPhase(numberOfAccepted, lastAcceptSent)) {
             String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
             messageHandler.broadcast(message);
 
