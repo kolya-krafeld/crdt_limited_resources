@@ -1,4 +1,4 @@
-package config;
+package main;
 
 public record Config(int heartbeatTimeout, int sendHeartbeatInterval) {
     public Config {

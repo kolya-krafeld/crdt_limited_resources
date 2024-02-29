@@ -2,6 +2,7 @@ package main.utils;
 
 public enum MessageType {
 
+    HEARTBEAT("heartbeat", false),
     MERGE("merge", false),
     INC("increment", false),
     DEC("decrement", false),

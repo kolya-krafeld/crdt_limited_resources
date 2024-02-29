@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     public static void main(String[] args) throws Exception {
+        Config config = new Config(1000, 400);
         List<Integer> ports = List.of(8000, 8001);
         Node node1 = new Node(8000, ports);
         node1.getCrdt().setUpper(0,10);
@@ -23,6 +24,9 @@ public class Main {
         node2.getCrdt().setUpper(0,10);
         node2.getCrdt().setUpper(1,10);
         node2.setLeaderPort(8000);
+        Node node1 = new Node(8000, ports, config);
+        node1.init();
+        Node node2 = new Node(8001, ports, config);
         node2.init();
 
         CrdtChanger2 crdtChanger = new CrdtChanger2(node1, node2);

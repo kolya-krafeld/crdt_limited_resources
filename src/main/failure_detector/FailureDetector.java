@@ -1,29 +1,29 @@
-package failure_detector;
+package main.failure_detector;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
-import config.Config;
-import node.Node;
+import main.Config;
+import main.MessageHandler;
+import main.utils.MessageType;
 
 public class FailureDetector {
-    private Node ownerNode;
-    private final List<Node> allNodes;
-    private List<Node> suspectedNodes;
-    private List<Node> unsuspectedNodes;
-    private Map<Node, Long> lastHeartbeat;
+    private int nodePort;
+    private final List<Integer> allNodes;
+    private List<Integer> suspectedNodes;
+    private List<Integer> unsuspectedNodes;
+    private Map<Integer, Long> lastHeartbeat;
+    private MessageHandler messageHandler;
     private ScheduledExecutorService heartbeatExecutor;
     private ScheduledExecutorService checkExecutor;
     private final int heartbeatTimeout;
     private final int sendHeartbeatInterval;
 
-    public FailureDetector(Node node, List<Node> allNodes, Config config) {
-        this.ownerNode = node;
+    public FailureDetector(int nodePort, List<Integer> allNodes, Config config) {
+        this.nodePort = nodePort;
         this.allNodes = allNodes;
         this.suspectedNodes = new ArrayList<>(allNodes);
         this.unsuspectedNodes = new ArrayList<>();
@@ -32,6 +32,7 @@ public class FailureDetector {
         this.checkExecutor = Executors.newSingleThreadScheduledExecutor();
         this.heartbeatTimeout = config.heartbeatTimeout();
         this.sendHeartbeatInterval = config.sendHeartbeatInterval();
+        this.messageHandler = new MessageHandler(nodePort);
         
     }
 
@@ -46,15 +47,16 @@ public class FailureDetector {
     }
 
     private void sendHeartbeat() {
-        for (Node receiverNode : this.allNodes) {
-            receiverNode.receiveHeartbeat(this.ownerNode);
+        for (int receiverNode : this.allNodes) {
+            String message = MessageType.HEARTBEAT.getTitle() + ":" + this.nodePort;
+            messageHandler.send(message, receiverNode, new ConcurrentHashMap<>());
         }
     }
 
     private void checkHeartbeats() {
         long now = System.currentTimeMillis();
-        List<Node> toBeSuspected = new ArrayList<>();
-        for (Node node : this.unsuspectedNodes) {
+        List<Integer> toBeSuspected = new ArrayList<>();
+        for (int node : this.unsuspectedNodes) {
             if (now - this.lastHeartbeat.getOrDefault(node, 0L) > this.heartbeatTimeout) {
                 toBeSuspected.add(node);
             }
@@ -63,7 +65,7 @@ public class FailureDetector {
         this.suspectedNodes.addAll(toBeSuspected);
     }
 
-    public void updateNodeStatus(Node node) {
+    public void updateNodeStatus(int node) {
         this.lastHeartbeat.put(node, System.currentTimeMillis());
         this.suspectedNodes.remove(node);
         if (!this.unsuspectedNodes.contains(node)) {

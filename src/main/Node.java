@@ -1,7 +1,9 @@
 package main;
 
+import com.sun.net.httpserver.Authenticator;
 import main.crdt.LimitedResourceCrdt;
 import main.utils.MessageType;
+import main.failure_detector.FailureDetector;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -54,11 +56,15 @@ class Node {
     private int numberOfStates = 0;
     private int numberOfAccepted = 0;
 
+    /*
+     * Sends and receives heartbeats in separate thread.
+     */
+    private FailureDetector failureDetector;
+
     /**
      * Utils object that handels sending messages.
      */
     private final MessageHandler messageHandler;
-
     /**
      * Flag to indicate if the node is currently in lease coordination phase.
      */
@@ -74,23 +80,25 @@ class Node {
      */
     Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
 
-    public Node(int port, List<Integer> nodesPorts) {
+    public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
         this.messageHandler = new MessageHandler(port);
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
-
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
         if (ownIndex == -1) {
             throw new IllegalArgumentException("Port not in list of nodes.");
         }
         this.ownIndex = ownIndex;
+        this.failureDetector = new FailureDetector(this.ownPort, nodesPorts, config);
+
     }
 
     public void init() throws Exception {
         MessageReceiver messageReceiver = new MessageReceiver(ownPort);
         messageReceiver.start();
+        failureDetector.start();
 
         MessageProcessor messageProcessor = new MessageProcessor();
         messageProcessor.start();
@@ -100,6 +108,17 @@ class Node {
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.scheduleAtFixedRate(merger, 10, 10, TimeUnit.SECONDS);
     }
+
+    //TODO: entfernen: nur zu testzwecken
+    public int numberOfConnectedNodes() {
+        return this.failureDetector.numberOfConnectedNodes();
+    }
+
+    //TODO: entfernen: nur zu testzwecken
+    public boolean isConnectedToQuorum() {
+        return this.failureDetector.isConnectedToQuorum();
+    }
+
 
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
@@ -296,6 +315,10 @@ class Node {
 
                     // Add message to correct queue
                     MessageType messageType = MessageType.getMessageTypeFromMessageString(receivedMessage);
+                    //Heartbeat has highest priority and gets processed immediately
+                    if(messageType == MessageType.HEARTBEAT){
+                        failureDetector.updateNodeStatus(Integer.parseInt(receivedMessage.split(":")[1]));
+                    }
                     if (messageType.isCoordinationMessage()) {
                         coordiantionMessageQueue.add(receivedMessage);
                     } else {
