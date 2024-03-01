@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 import main.Config;
-import main.MessageHandler;
+import main.utils.MessageHandler;
 import main.utils.LogicalClock;
 import main.utils.MessageType;
 import main.Node;
@@ -39,7 +39,6 @@ public class FailureDetector {
         this.checkExecutor = Executors.newSingleThreadScheduledExecutor();
         this.sendHeartbeatInterval = config.sendHeartbeatInterval();
         this.heartbeatTimeout = config.heartbeatTimeout();
-        this.messageHandler = new MessageHandler(nodePort);
     }
 
 
@@ -56,7 +55,7 @@ public class FailureDetector {
     private void sendHeartbeatPing() {
         for (int receiverNode : this.allNodes) {
             String message = MessageType.HEARTBEAT_PING.getTitle() + ":" + this.nodePort;
-            node.messageHandler.send(message, receiverNode, new ConcurrentHashMap<>());
+            node.messageHandler.send(message, receiverNode);
             sendHeartbeatPingAtTime.put(receiverNode, node.getTime());
         }
     }

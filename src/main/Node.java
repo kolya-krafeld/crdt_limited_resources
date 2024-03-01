@@ -35,7 +35,7 @@ public class Node {
     /**
      * Utils object that handels sending messages.
      */
-    private final MessageHandler messageHandler;
+    public final MessageHandler messageHandler;
     /**
      * Flag to indicate if the node is currently in lease coordination phase.
      */
@@ -127,7 +127,8 @@ public class Node {
      */
     public void init() {
 
-        this.clockExecutor.scheduleAtFixedRate(this.logicalClock.tick(), 0, this.config.tick(), TimeUnit.MILLISECONDS); //TODO wirft nullpointerexception, muss mir was andferes für das schedulen ausdeken
+        ScheduledExecutorService clockExecutor = Executors.newScheduledThreadPool(1);
+        clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tick(), TimeUnit.MILLISECONDS);
         failureDetector.start();
         
         MessageReceiver messageReceiver = new MessageReceiver(this);

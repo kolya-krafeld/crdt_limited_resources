@@ -7,9 +7,8 @@ public class LogicalClock {
         this.time = 0;
     }
 
-    public Runnable tick() {
+    public void tick() {
         this.time += 1;
-        return null;
     }
 
     public int getTime() {
