@@ -7,8 +7,10 @@ import main.jobs.MessageReceiver;
 import main.utils.Message;
 import main.utils.MessageHandler;
 
+import javax.swing.text.html.Option;
 import java.net.DatagramSocket;
 import java.util.List;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.*;
 
@@ -64,6 +66,11 @@ public class Node {
     private List<Integer> nodesPorts;
 
     /**
+     * Size of a quorum with the current amount of nodes.
+     */
+    private int quorumSize;
+
+    /**
      * CRDT that only allows access to limited ressources.
      */
     private LimitedResourceCrdt crdt;
@@ -71,12 +78,14 @@ public class Node {
     /**
      * CRDT that was accepted in the last coordination phase.
      */
-    private LimitedResourceCrdt acceptedCrdt = null;
+    private Optional<LimitedResourceCrdt> acceptedCrdt = Optional.empty();
 
     public Node(int port, List<Integer> nodesPorts) {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
+
+        this.quorumSize = (nodesPorts.size() / 2) + 1;
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -176,7 +185,20 @@ public class Node {
         return outOfResources;
     }
 
+    public Optional<LimitedResourceCrdt> getAcceptedCrdt() {
+        return acceptedCrdt;
+    }
+
     public void setAcceptedCrdt(LimitedResourceCrdt acceptedCrdt) {
-        this.acceptedCrdt = acceptedCrdt;
+        if (acceptedCrdt == null) {
+            this.acceptedCrdt = Optional.empty();
+            return;
+        }
+
+        this.acceptedCrdt = Optional.of(acceptedCrdt);
+    }
+
+    public int getQuorumSize() {
+        return quorumSize;
     }
 }

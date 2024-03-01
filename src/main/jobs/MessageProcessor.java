@@ -5,11 +5,9 @@ import main.Node;
 import main.crdt.LimitedResourceCrdt;
 import main.utils.Message;
 import main.utils.MessageType;
+import main.utils.Persister;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Thread responsible for processing messages from the node's message queues.
@@ -18,6 +16,7 @@ public class MessageProcessor extends Thread {
 
     private final Node node;
     private final MessageHandler messageHandler;
+    private final Persister persister;
 
     /**
      * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
@@ -40,9 +39,19 @@ public class MessageProcessor extends Thread {
      */
     private List<Integer> leaseRequestFrom = new ArrayList<>();
 
+    /**
+     * Timestamp when the last request for state/accept was broadcasted.
+     * Used to see whether we need to wait for more messages.
+     */
+    private long lastRequestStateSent = 0;
+    private long lastAcceptSent = 0;
+
+    private final long messageWaitTime = 100;
+
     public MessageProcessor(Node node, MessageHandler messageHandler) {
         this.node = node;
         this.messageHandler = messageHandler;
+        this.persister = new Persister(node);
     }
 
 
@@ -130,6 +139,7 @@ public class MessageProcessor extends Thread {
                 leaseRequestFrom.clear();
 
                 // Send Request State to all other nodes
+                this.lastRequestStateSent = System.currentTimeMillis();
                 messageHandler.broadcastWithIgnore(MessageType.REQS.getTitle(), node.getNodesPorts(), leaseRequestFrom);
             }
 
@@ -164,16 +174,14 @@ public class MessageProcessor extends Thread {
             leaderMergedCrdt.merge(state);
             statesReceivedFrom.add(message.getPort());
 
-            // todo change number here + timeout
-            // States received from + 1 for the leader
-            if (statesReceivedFrom.size() + 1 == node.getNodesPorts().size()) {
-
+            if (isReadyToProcessNextCoordinationPhase(statesReceivedFrom.size(), lastRequestStateSent)) {
                 // Reassign leases
                 reassignLeases();
                 System.out.println("Leader proposes state: " + leaderMergedCrdt);
 
 
                 // Send ACCEPT to all nodes
+                this.lastAcceptSent = System.currentTimeMillis();
                 String outMessage = MessageType.ACCEPT.getTitle() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(outMessage);
 
@@ -184,12 +192,36 @@ public class MessageProcessor extends Thread {
     }
 
     /**
+     * Decides whether we are ready to process next coordination phase: e.g. after request state or accept.
+     * Case 1: We have received STATE/ACCEPTED message from all nodes.
+     * Case 2: We have received STATE/ACCEPTED message from a quorum of nodes and we have passed the wait time.
+     */
+    private boolean isReadyToProcessNextCoordinationPhase(int messagesReceivedFrom, long lastMessageSent) {
+        // +1 is for leader
+        if (messagesReceivedFrom + 1 == node.getNodesPorts().size()) {
+            System.out.println("Received messages from all nodes.");
+            return true;
+        }
+        // +1 is for leader
+        if (messagesReceivedFrom + 1 >= node.getQuorumSize()
+                && System.currentTimeMillis() > messageWaitTime + lastMessageSent) {
+            System.out.println("Received messages from quorum of nodes after wait time had passed.");
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Follower receives accept from leader.
      * 1. Set state as accepted state
      * 2. Send accepted to leader
      */
     private void receiveAccept(Message message) {
         node.setAcceptedCrdt(new LimitedResourceCrdt(message.getContent()));
+        // Persist state before sending ACCEPTED to leader
+        persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+
         messageHandler.sendToLeader(MessageType.ACCEPTED.getTitle());
     }
 
@@ -200,17 +232,21 @@ public class MessageProcessor extends Thread {
      * 2. End coordination phase
      */
     private void receivedAccepted(String messageStr) {
-        numberOfAccepted++;
-        // todo change number here
-        // When number of accepted + 1 for leader is quorum, the state is decided
-        if (numberOfAccepted + 1 == node.getNodesPorts().size()) {
-            String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
-            messageHandler.broadcast(message);
+        if (node.isLeader()) {
+            numberOfAccepted++;
+            if (isReadyToProcessNextCoordinationPhase(numberOfAccepted, lastAcceptSent)) {
+                // Persist state before sending DECIDE to all nodes
+                persister.persistState(node.getCrdt(), Optional.empty());
 
-            // End coordination phase
-            node.setInCoordinationPhase(false);
-            numberOfAccepted = 0;
-            statesReceivedFrom.clear();
+                String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
+                messageHandler.broadcast(message);
+
+
+                // End coordination phase
+                node.setInCoordinationPhase(false);
+                numberOfAccepted = 0;
+                statesReceivedFrom.clear();
+            }
         }
     }
 
@@ -234,6 +270,9 @@ public class MessageProcessor extends Thread {
         }
 
         node.getCrdt().merge(mergingCrdt);
+        // Persist state after merging
+        persister.persistState(node.getCrdt(), Optional.empty());
+
         System.out.println("Received decided state: " + message.getContent());
         node.setInCoordinationPhase(false); // End of coordination phase
     }
@@ -357,6 +396,9 @@ public class MessageProcessor extends Thread {
             // We are in final resource mode but got resources assigned. We can decrement the counter now.
 
             node.getCrdt().decrement(node.getOwnIndex());
+            // Persist state before sending APPROVE to client
+            persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+
             // Notify client about successful decrement
             messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
         } else {
@@ -367,6 +409,9 @@ public class MessageProcessor extends Thread {
                 System.out.println("Could not decrement counter.");
                 // todo send request for lease
             } else {
+                // Persist state before sending APPROVE to client
+                persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+
                 // Notify client about successful decrement
                 messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
 
