@@ -7,13 +7,15 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 
 class FailureDetectorTest {
 
     @Test
     void testFailureDetector() throws InterruptedException {
 
-        Config config = new Config(100,5, 2);
+        Config config = new Config(500, 3, 1);
 
         List<Integer> ports = List.of(8000, 8001, 8002, 8003, 8004);
         List<Node> nodes = new ArrayList<>();
@@ -27,38 +29,43 @@ class FailureDetectorTest {
             nodes.add(node);
         });
 
-         Thread.sleep(1000);
-         for (Node node : nodes) {
-             System.out.println(
-                     "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-         }
+        Thread.sleep(2000);
+        for (Node node : nodes) {
+            assertEquals(5, node.failureDetector.numberOfConnectedNodes());
+            assertEquals(true, node.failureDetector.isConnectedToQuorum());
+        }
 
-//             for (int i = 0; i < 2; i++) {
-//                 nodes.get(i).stopFailureDetector();
-//             }
-//
-//             System.out.println("stopping failure detector for nodes 1 and 2");
-//
-//             Thread.sleep(1000);
-//             for (Node node : nodes) {
-//                 System.out.println(
-//                     "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-//                 }
-//
-//             nodes.get(2).stopFailureDetector();
-//
-//             System.out.println("stopping failure detector for node 3");
-//
-//             Thread.sleep(1000);
-//             for (Node node : nodes) {
-//                 System.out.println(
-//                     "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-//                 }
-//
-//             for (Node node : nodes) {
-//                 node.stopFailureDetector();
-//             }
-//          }
+
+        for (int i = 0; i < 2; i++) {
+            nodes.get(i).socket.close();
+        }
+        Thread.sleep(3000);
+
+        for (Node node : nodes) {
+            if (node.getOwnPort() < 8002) {
+                assertEquals(5, node.failureDetector.numberOfConnectedNodes());
+                assertEquals(true, node.failureDetector.isConnectedToQuorum());
+            } else {
+                assertEquals(3, node.failureDetector.numberOfConnectedNodes());
+                assertEquals(true, node.failureDetector.isConnectedToQuorum());
+            }
+        }
+
+        nodes.get(2).socket.close();
+        Thread.sleep(3000);
+
+        for (Node node : nodes) {
+            if (node.getOwnPort() < 8002) {
+                assertEquals(5, node.failureDetector.numberOfConnectedNodes());
+                assertEquals(true, node.failureDetector.isConnectedToQuorum());
+            } else if (node.getOwnPort() == 8002) {
+                assertEquals(3, node.failureDetector.numberOfConnectedNodes());
+                assertEquals(true, node.failureDetector.isConnectedToQuorum());
+            } else {
+                assertEquals(2, node.failureDetector.numberOfConnectedNodes());
+                assertEquals(false, node.failureDetector.isConnectedToQuorum());
+            }
+        }
 
     }
 

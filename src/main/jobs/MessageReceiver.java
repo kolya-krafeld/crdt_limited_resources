@@ -2,6 +2,7 @@ package main.jobs;
 
 import main.Node;
 import main.utils.Message;
+import main.utils.MessageType;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -35,8 +36,13 @@ public class MessageReceiver extends Thread {
                 System.out.println("Message from Client: " + receivedMessage);
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
-                // Add message to correct queue
-                if (message.getType().isCoordinationMessage()) {
+                // Add message to correct queue, Heartbeats get handled immediately
+                if(message.getType() == MessageType.HEARTBEAT_PING) {
+                    node.failureDetector.sendHeartbeatPong(message.getPort());
+                } else if (message.getType() == MessageType.HEARTBEAT_PONG) {
+                    node.failureDetector.updateNodeStatus(message.getPort());
+                }
+                else if (message.getType().isCoordinationMessage()) {
                     node.coordiantionMessageQueue.add(message);
                 } else {
                     node.operationMessageQueue.add(message);

@@ -23,9 +23,12 @@ public class FailureDetector {
     private MessageHandler messageHandler;
     private LogicalClock logicalClock;
     private ScheduledExecutorService heartbeatExecutor;
+    private ScheduledFuture<?> heartbeatTask;
     private ScheduledExecutorService checkExecutor;
+    private ScheduledFuture<?> checkTask;
     private final int sendHeartbeatInterval;
     private final int heartbeatTimeout;
+    private final int tickLength;
 
     public FailureDetector(Node node, int nodePort, List<Integer> allNodes, Config config) {
         this.node = node;
@@ -39,17 +42,14 @@ public class FailureDetector {
         this.checkExecutor = Executors.newSingleThreadScheduledExecutor();
         this.sendHeartbeatInterval = config.sendHeartbeatInterval();
         this.heartbeatTimeout = config.heartbeatTimeout();
+        this.tickLength = config.tick();
+
     }
 
 
     public void start() {
-        this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeatPing, 0, this.sendHeartbeatInterval, TimeUnit.MILLISECONDS);
-        this.checkExecutor.scheduleAtFixedRate(this::checkHeartbeats, 0, this.heartbeatTimeout, TimeUnit.MILLISECONDS);
-    }
-
-    public void stop() {
-        this.heartbeatExecutor.shutdown();
-        this.checkExecutor.shutdown();
+        heartbeatTask = this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeatPing, 0, this.sendHeartbeatInterval * tickLength, TimeUnit.MILLISECONDS);
+        checkTask = this.checkExecutor.scheduleAtFixedRate(this::checkHeartbeats, 0, this.heartbeatTimeout * tickLength, TimeUnit.MILLISECONDS);
     }
 
     private void sendHeartbeatPing() {
@@ -62,15 +62,18 @@ public class FailureDetector {
 
     private void checkHeartbeats() {
         List<Integer> toBeSuspected = new ArrayList<>();
-        for (int node : this.unsuspectedNodes) {
-            int send = sendHeartbeatPingAtTime.getOrDefault(node, 0);
-            int received = gotHeartbeatPongAtTime.getOrDefault(node, 0);
-            if (received == 0 || received - send > this.heartbeatTimeout) {
+        List<Integer> toBeUnsuspected = new ArrayList<>();
+        for (int node : this.allNodes) {
+            int send = sendHeartbeatPingAtTime.getOrDefault(node, -1);
+            int received = gotHeartbeatPongAtTime.getOrDefault(node, -1);
+            if (received < 0 || send - received > this.heartbeatTimeout) {
                 toBeSuspected.add(node);
+            } else {
+                toBeUnsuspected.add(node);
             }
         }
-        this.unsuspectedNodes.removeAll(toBeSuspected);
-        this.suspectedNodes.addAll(toBeSuspected);
+        this.suspectedNodes = toBeSuspected;
+        this.unsuspectedNodes = toBeUnsuspected;
     }
 
     public void updateNodeStatus(int node) {
@@ -84,7 +87,6 @@ public class FailureDetector {
     public synchronized boolean isConnectedToQuorum() {
         return this.unsuspectedNodes.size() > this.suspectedNodes.size();
     }
-
 
     public void sendHeartbeatPong(int port) {
         node.messageHandler.send(MessageType.HEARTBEAT_PONG.getTitle(), port);

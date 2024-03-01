@@ -90,7 +90,7 @@ public class Node {
 
     private Config config;
     private ScheduledExecutorService clockExecutor;
-    private FailureDetector failureDetector;
+    public FailureDetector failureDetector;
     public LogicalClock logicalClock;
 
     public Node(int port, List<Integer> nodesPorts, Config config) {
@@ -142,17 +142,6 @@ public class Node {
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.scheduleAtFixedRate(merger, 10, 10, TimeUnit.SECONDS);
     }
-
-    //TODO: entfernen: nur zu testzwecken
-    public int numberOfConnectedNodes() {
-        return this.failureDetector.numberOfConnectedNodes();
-    }
-
-    //TODO: entfernen: nur zu testzwecken
-    public boolean isConnectedToQuorum() {
-        return this.failureDetector.isConnectedToQuorum();
-    }
-
 
     public synchronized int getTime() {
         return this.logicalClock.getTime();
