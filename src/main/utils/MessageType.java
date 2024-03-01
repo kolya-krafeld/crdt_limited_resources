@@ -3,6 +3,8 @@ package main.utils;
 public enum MessageType {
 
     // Peer-to-peer messages
+    HEARTBEAT_PING("heartbeat_ping", false),
+    HEARTBEAT_PONG("heartbeat_pong", false),
     MERGE("merge", false),
     REQL("request-lease", true),
     REQS("request-state", true),

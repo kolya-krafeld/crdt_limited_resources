@@ -1,11 +1,17 @@
 package main;
 
+import com.sun.net.httpserver.Authenticator;
 import main.crdt.LimitedResourceCrdt;
 import main.jobs.CrdtMerger;
 import main.jobs.MessageProcessor;
 import main.jobs.MessageReceiver;
 import main.utils.Message;
 import main.utils.MessageHandler;
+
+import main.failure_detector.FailureDetector;
+import main.utils.Message;
+import main.utils.LogicalClock;
+import main.utils.MessageType;
 
 import javax.swing.text.html.Option;
 import java.net.DatagramSocket;
@@ -80,12 +86,24 @@ public class Node {
      */
     private Optional<LimitedResourceCrdt> acceptedCrdt = Optional.empty();
 
-    public Node(int port, List<Integer> nodesPorts) {
+    
+
+    private Config config;
+    private ScheduledExecutorService clockExecutor;
+    private FailureDetector failureDetector;
+    public LogicalClock logicalClock;
+
+    public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
 
         this.quorumSize = (nodesPorts.size() / 2) + 1;
+
+        this.config = config;
+        this.logicalClock = new LogicalClock();
+        this.clockExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.failureDetector = new FailureDetector(this, this.ownPort, nodesPorts, config);
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -108,6 +126,10 @@ public class Node {
      * Starts the node.
      */
     public void init() {
+
+        this.clockExecutor.scheduleAtFixedRate(this.logicalClock.tick(), 0, this.config.tick(), TimeUnit.MILLISECONDS); //TODO wirft nullpointerexception, muss mir was andferes für das schedulen ausdeken
+        failureDetector.start();
+        
         MessageReceiver messageReceiver = new MessageReceiver(this);
         messageReceiver.start();
 
@@ -120,7 +142,20 @@ public class Node {
         executor.scheduleAtFixedRate(merger, 10, 10, TimeUnit.SECONDS);
     }
 
+    //TODO: entfernen: nur zu testzwecken
+    public int numberOfConnectedNodes() {
+        return this.failureDetector.numberOfConnectedNodes();
+    }
 
+    //TODO: entfernen: nur zu testzwecken
+    public boolean isConnectedToQuorum() {
+        return this.failureDetector.isConnectedToQuorum();
+    }
+
+
+    public synchronized int getTime() {
+        return this.logicalClock.getTime();
+    }
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */
