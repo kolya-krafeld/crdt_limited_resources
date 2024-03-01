@@ -2,7 +2,9 @@ package main;
 
 import com.sun.net.httpserver.Authenticator;
 import main.crdt.LimitedResourceCrdt;
+import main.failure_detector.FailureDetector;
 import main.utils.Message;
+import main.utils.LogicalClock;
 import main.utils.MessageType;
 
 import java.io.IOException;
@@ -20,10 +22,7 @@ import java.util.concurrent.*;
  * Node in the network. Connects to other nodes and clients.
  * Responsible for its own CRDT.
  */
-class Node {
-
-    private int ownPort;
-    private int leaderPort;
+public class Node {
 
     /**
      * UDP socket for receiving and sending messages.
@@ -31,32 +30,11 @@ class Node {
     private DatagramSocket socket;
 
     /**
-     * Maps ports to their respective output sockets.
+     * Utils object that handels sending messages.
      */
-    private ConcurrentHashMap<Integer, Socket> nodeOutputSockets = new ConcurrentHashMap<>();
+    public final MessageHandler messageHandler;
     /**
-     * CRDT that only allows access to limited ressources.
-     */
-    private FailureDetector failureDetector;
-
-    /**
-     * CRDT tht we have accepted but is not decided yet.
-     */
-    private LimitedResourceCrdt acceptedCrdt = null;
-    /**
-     * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
-     */
-    private LimitedResourceCrdt leaderMergedCrdt = null;
-    private int numberOfStates = 0;
-
-    /**
-     * Set of all nodes (ports) that we have received a state from.
-     */
-    private final MessageHandler messageHandler;
-    private Set<Integer> statesReceivedFrom = new HashSet<>();
-
-    /**
-     * Indicates which node has send us the latest request for lease.
+     * Flag to indicate if the node is currently in lease coordination phase.
      */
     boolean inCoordinationPhase = false;
 
@@ -117,38 +95,20 @@ class Node {
 
     private int numberOfAccepted = 0;
 
-    /**
-     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
-     */
-    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
-
-    /**
-     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
-     */
-    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
-
-    /**
-     * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
-     */
-    Queue<String> operationMessageQueue = new ConcurrentLinkedQueue<>();
-
-    /**
-     * Queue of messages to be processed. Using concurrent queue to make it thread safe.
-     */
-    Queue<String> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+    private Config config;
+    private ScheduledExecutorService clockExecutor;
+    private FailureDetector failureDetector;
+    public LogicalClock logicalClock;
 
     public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
-        // Get own index in port list
-        int ownIndex = nodesPorts.indexOf(port);
-        if (ownIndex == -1) {
-            throw new IllegalArgumentException("Port not in list of nodes.");
-        }
-        this.ownIndex = ownIndex;
-        this.failureDetector = new FailureDetector(this.ownPort, nodesPorts, config);
 
+        this.config = config;
+        this.logicalClock = new LogicalClock();
+        this.clockExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.failureDetector = new FailureDetector(this, this.ownPort, nodesPorts, config);
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -170,6 +130,9 @@ class Node {
     public void init() throws Exception {
         MessageReceiver messageReceiver = new MessageReceiver();
         messageReceiver.start();
+
+        this.clockExecutor.scheduleAtFixedRate(this.logicalClock.tick(), 0, this.config.tick(), TimeUnit.MILLISECONDS); //TODO wirft nullpointerexception, muss mir was andferes für das schedulen ausdeken
+
         failureDetector.start();
 
         MessageProcessor messageProcessor = new MessageProcessor();
@@ -192,6 +155,9 @@ class Node {
     }
 
 
+    public synchronized int getTime() {
+        return this.logicalClock.getTime();
+    }
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */
@@ -203,10 +169,6 @@ class Node {
 
     public LimitedResourceCrdt getCrdt() {
         return crdt;
-    }
-
-    public void setLeaderPort(int leaderPort) {
-        this.leaderPort = leaderPort;
     }
 
     public void setLeaderPort(int leaderPort) {
@@ -487,19 +449,14 @@ class Node {
                     System.out.println("Message from Client: " + receivedMessage);
                     Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
-                    // Add message to correct queue
-<<<<<<< HEAD
-                    MessageType messageType = MessageType.getMessageTypeFromMessageString(receivedMessage);
-                    //Heartbeat has highest priority and gets processed immediately
-                    if(messageType == MessageType.HEARTBEAT){
-                        failureDetector.updateNodeStatus(Integer.parseInt(receivedMessage.split(":")[1]));
-                    }
-                    if (messageType.isCoordinationMessage()) {
-                        coordiantionMessageQueue.add(receivedMessage);
-=======
+                    // Add message to correct queue, heartbeat messages are handled immediately
+                    if(message.getType() == MessageType.HEARTBEAT_PING) {
+                        failureDetector.sendHeartbeatPong(message.getPort());
+                    if(message.getType() == MessageType.HEARTBEAT_PONG) {
+                        failureDetector.updateNodeStatus(message.getPort());
+                    } else
                     if (message.getType().isCoordinationMessage()) {
                         coordiantionMessageQueue.add(message);
->>>>>>> 73bf677 (Coordiantion state intermediate state)
                     } else {
                         operationMessageQueue.add(message);
                     }

@@ -8,36 +8,43 @@ import java.util.concurrent.*;
 
 import main.Config;
 import main.MessageHandler;
+import main.utils.LogicalClock;
 import main.utils.MessageType;
+import main.Node;
 
 public class FailureDetector {
-    private int nodePort;
+    private final int nodePort;
     private final List<Integer> allNodes;
+    private Node node;
     private List<Integer> suspectedNodes;
     private List<Integer> unsuspectedNodes;
-    private Map<Integer, Long> lastHeartbeat;
+    private Map<Integer, Integer> sendHeartbeatPingAtTime;
+    private Map<Integer, Integer> gotHeartbeatPongAtTime;
     private MessageHandler messageHandler;
+    private LogicalClock logicalClock;
     private ScheduledExecutorService heartbeatExecutor;
     private ScheduledExecutorService checkExecutor;
-    private final int heartbeatTimeout;
     private final int sendHeartbeatInterval;
+    private final int heartbeatTimeout;
 
-    public FailureDetector(int nodePort, List<Integer> allNodes, Config config) {
+    public FailureDetector(Node node, int nodePort, List<Integer> allNodes, Config config) {
+        this.node = node;
         this.nodePort = nodePort;
         this.allNodes = allNodes;
         this.suspectedNodes = new ArrayList<>(allNodes);
         this.unsuspectedNodes = new ArrayList<>();
-        this.lastHeartbeat = new HashMap<>();
+        this.sendHeartbeatPingAtTime = new HashMap<>();
+        this.gotHeartbeatPongAtTime = new HashMap<>();
         this.heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
         this.checkExecutor = Executors.newSingleThreadScheduledExecutor();
-        this.heartbeatTimeout = config.heartbeatTimeout();
         this.sendHeartbeatInterval = config.sendHeartbeatInterval();
+        this.heartbeatTimeout = config.heartbeatTimeout();
         this.messageHandler = new MessageHandler(nodePort);
-        
     }
 
+
     public void start() {
-        this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeat, 0, this.sendHeartbeatInterval, TimeUnit.MILLISECONDS);
+        this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeatPing, 0, this.sendHeartbeatInterval, TimeUnit.MILLISECONDS);
         this.checkExecutor.scheduleAtFixedRate(this::checkHeartbeats, 0, this.heartbeatTimeout, TimeUnit.MILLISECONDS);
     }
 
@@ -46,18 +53,20 @@ public class FailureDetector {
         this.checkExecutor.shutdown();
     }
 
-    private void sendHeartbeat() {
+    private void sendHeartbeatPing() {
         for (int receiverNode : this.allNodes) {
-            String message = MessageType.HEARTBEAT.getTitle() + ":" + this.nodePort;
-            messageHandler.send(message, receiverNode, new ConcurrentHashMap<>());
+            String message = MessageType.HEARTBEAT_PING.getTitle() + ":" + this.nodePort;
+            node.messageHandler.send(message, receiverNode, new ConcurrentHashMap<>());
+            sendHeartbeatPingAtTime.put(receiverNode, node.getTime());
         }
     }
 
     private void checkHeartbeats() {
-        long now = System.currentTimeMillis();
         List<Integer> toBeSuspected = new ArrayList<>();
         for (int node : this.unsuspectedNodes) {
-            if (now - this.lastHeartbeat.getOrDefault(node, 0L) > this.heartbeatTimeout) {
+            int send = sendHeartbeatPingAtTime.getOrDefault(node, 0);
+            int received = gotHeartbeatPongAtTime.getOrDefault(node, 0);
+            if (received == 0 || received - send > this.heartbeatTimeout) {
                 toBeSuspected.add(node);
             }
         }
@@ -66,11 +75,7 @@ public class FailureDetector {
     }
 
     public void updateNodeStatus(int node) {
-        this.lastHeartbeat.put(node, System.currentTimeMillis());
-        this.suspectedNodes.remove(node);
-        if (!this.unsuspectedNodes.contains(node)) {
-            this.unsuspectedNodes.add(node);
-        }
+        this.gotHeartbeatPongAtTime.put(node, this.node.getTime());
     }
 
     public synchronized int numberOfConnectedNodes() {
@@ -82,6 +87,7 @@ public class FailureDetector {
     }
 
 
-
-
+    public void sendHeartbeatPong(int port) {
+        node.messageHandler.send(MessageType.HEARTBEAT_PONG.getTitle(), port);
+    }
 }

@@ -1,19 +1,28 @@
+package main.utils;
+
 public class LogicalClock {
-    private long time;
-    private long timeout;
+    private int time;
 
-    public LogicalClock(long timeout) {
+    public LogicalClock() {
         this.time = 0;
-        this.timeout = timeout;
     }
 
-    public boolean tickAndCheckTimeout() {
+    public Runnable tick() {
         this.time += 1;
-        if (this.time == this.timeout) {
-            this.time = 0;
-            return true;
-        } else {
-            return false;
-        }
+        return null;
     }
+
+    public int getTime() {
+        return this.time;
+    }
+
+//    public boolean tickAndCheckTimeout() {
+//        this.time += 1;
+//        if (this.time == this.timeout) {
+//            this.time = 0;
+//            return true;
+//        } else {
+//            return false;
+//        }
+//    }
 }

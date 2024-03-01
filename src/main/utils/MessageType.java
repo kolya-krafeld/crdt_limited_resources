@@ -2,7 +2,8 @@ package main.utils;
 
 public enum MessageType {
 
-    HEARTBEAT("heartbeat", false),
+    HEARTBEAT_PING("heartbeat_ping", false),
+    HEARTBEAT_PONG("heartbeat_pong", false),
     MERGE("merge", false),
     INC("increment", false),
     DEC("decrement", false),

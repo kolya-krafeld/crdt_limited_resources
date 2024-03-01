@@ -9,15 +9,15 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     public static void main(String[] args) throws Exception {
-        Config config = new Config(1000, 400);
+        Config config = new Config(100, 10, 2);
         List<Integer> ports = List.of(8000, 8001);
-        Node node1 = new Node(8000, ports);
+        Node node1 = new Node(8000, ports, config);
         node1.getCrdt().setUpper(0,10);
         node1.getCrdt().setUpper(1,10);
         node1.setLeaderPort(8000);
         node1.init();
 
-        Node node2 = new Node(8001, ports);
+        Node node2 = new Node(8001, ports, config);
         node2.getCrdt().setUpper(0,10);
         node2.getCrdt().setUpper(1,10);
         node2.setLeaderPort(8000);
@@ -56,54 +56,6 @@ public class Main {
         }
     }
 
-    //  public static void testFailureDetector() throws InterruptedException {
-
-    //     Config config = new Config(1000, 400);
-    //     // Erstellen Sie eine Liste von Knoten
-    //     List<Node> nodes = new ArrayList<>();
-    //     for (int i = 0; i < 5; i++) {
-    //         nodes.add(new Node(i, nodes, config));
-    //     }
-
-    //     for (Node node : nodes) {
-    //         node.startFailureDetector();
-    //     }
-
-    //     Thread.sleep(1000);
-    //     for (Node node : nodes) {
-    //         System.out.println(
-    //                 "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-    //     }
-    
-    //     for (int i = 0; i < 2; i++) {
-    //         nodes.get(i).stopFailureDetector();
-    //     }
-
-    //     System.out.println("stopping failure detector for nodes 1 and 2");
-
-    //     Thread.sleep(1000);
-    //     for (Node node : nodes) {
-    //         System.out.println(
-    //             "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-    //         }
-
-    //     nodes.get(2).stopFailureDetector();
-
-    //     System.out.println("stopping failure detector for node 3");
-
-    //     Thread.sleep(1000);
-    //     for (Node node : nodes) {
-    //         System.out.println(
-    //             "Node " + nodes.indexOf(node) + "  connected to:  " + node.numberOfConnectedNodes() + "  Quorum connected: " + node.isConnectedToQuorum());
-    //         }
-
-    //     for (Node node : nodes) {
-    //         node.stopFailureDetector();
-    //     }
-    //  }
-
-
-}
     // Just used for test purposes to see what happens when we are constantly changing the CRDTs.
     static class CrdtChanger2 implements Runnable {
 
