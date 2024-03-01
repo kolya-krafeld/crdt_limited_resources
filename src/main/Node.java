@@ -7,8 +7,10 @@ import main.jobs.MessageReceiver;
 import main.utils.Message;
 import main.utils.MessageHandler;
 
+import javax.swing.text.html.Option;
 import java.net.DatagramSocket;
 import java.util.List;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.*;
 
@@ -76,7 +78,7 @@ public class Node {
     /**
      * CRDT that was accepted in the last coordination phase.
      */
-    private LimitedResourceCrdt acceptedCrdt = null;
+    private Optional<LimitedResourceCrdt> acceptedCrdt = Optional.empty();
 
     public Node(int port, List<Integer> nodesPorts) {
         this.ownPort = port;
@@ -183,8 +185,17 @@ public class Node {
         return outOfResources;
     }
 
+    public Optional<LimitedResourceCrdt> getAcceptedCrdt() {
+        return acceptedCrdt;
+    }
+
     public void setAcceptedCrdt(LimitedResourceCrdt acceptedCrdt) {
-        this.acceptedCrdt = acceptedCrdt;
+        if (acceptedCrdt == null) {
+            this.acceptedCrdt = Optional.empty();
+            return;
+        }
+
+        this.acceptedCrdt = Optional.of(acceptedCrdt);
     }
 
     public int getQuorumSize() {
