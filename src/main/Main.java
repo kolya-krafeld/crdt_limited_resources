@@ -7,22 +7,26 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import main.utils.Message;
+import main.utils.MessageType;
+
 public class Main {
     public static void main(String[] args) throws Exception {
+        Config config = new Config(100,5, 2);
         List<Integer> ports = List.of(8000, 8001, 8002);
-        Node node1 = new Node(8000, ports);
+        Node node1 = new Node(8000, ports, config);
         node1.getCrdt().setUpper(0, 10);
         node1.getCrdt().setUpper(1, 10);
         node1.setLeaderPort(8000);
         node1.init();
 
-        Node node2 = new Node(8001, ports);
+        Node node2 = new Node(8001, ports, config);
         node2.getCrdt().setUpper(0, 10);
         node2.getCrdt().setUpper(1, 10);
         node2.setLeaderPort(8000);
         node2.init();
 
-        Node node3 = new Node(8002, ports);
+        Node node3 = new Node(8002, ports, config);
         node3.getCrdt().setUpper(0, 10);
         node3.getCrdt().setUpper(2, 10);
         node3.setLeaderPort(8000);
