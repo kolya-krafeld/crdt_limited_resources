@@ -14,7 +14,6 @@ public enum MessageType {
 
     // Restarts
     REQUEST_SYNC("request-sync", true),
-
     ACCEPT_SYNC("accept-sync", true),
 
     // Client messages

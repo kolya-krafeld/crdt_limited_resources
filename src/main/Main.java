@@ -34,6 +34,9 @@ public class Main {
             nodes.add(node);
         }
 
+        // Delay coordination messages from this node
+        nodes.get(nodes.size() - 1).setAddMessageDelay(true);
+
         Client client = new Client(ports, nodes);
         client.init();
 
@@ -77,12 +80,12 @@ public class Main {
             ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
             //executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
             executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
-            executor.scheduleAtFixedRate(nodeKiller, 6, 15, TimeUnit.SECONDS);
+            //executor.scheduleAtFixedRate(nodeKiller, 6, 30, TimeUnit.SECONDS);
 
 
             try {
                 Thread.sleep(2000);
-                for (int i = 0; i < 40; i++) {
+                for (int i = 0; i < 60; i++) {
                     requestResource();
                     Thread.sleep(1000);
                 }
@@ -130,9 +133,9 @@ public class Main {
                 System.out.println("Killing node: " + node.getOwnPort());
                 node.kill();
 
-                // Sleep for 1 sec
+                // Sleep for 20 sec
                 try {
-                    Thread.sleep(1000);
+                    Thread.sleep(20000);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }

@@ -103,6 +103,11 @@ public class Node {
      */
     private int lastDecideRoundNumber = 0;
 
+    /**
+     * Flag used for testing. If set to true, the node will add a delay to every message it sends.
+     */
+    private boolean addMessageDelay = false;
+
     // JOBS
     private MessageReceiver messageReceiver;
     private MessageProcessor messageProcessor;
@@ -310,5 +315,13 @@ public class Node {
 
     public int getQuorumSize() {
         return quorumSize;
+    }
+
+    public void setAddMessageDelay(boolean addMessageDelay) {
+        this.addMessageDelay = addMessageDelay;
+    }
+
+    public boolean isAddMessageDelay() {
+        return addMessageDelay;
     }
 }
