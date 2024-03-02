@@ -1,11 +1,18 @@
 package main;
 
+import com.sun.net.httpserver.Authenticator;
 import main.crdt.LimitedResourceCrdt;
 import main.jobs.CrdtMerger;
 import main.jobs.MessageProcessor;
 import main.jobs.MessageReceiver;
 import main.utils.*;
 
+import main.failure_detector.FailureDetector;
+import main.utils.Message;
+import main.utils.LogicalClock;
+import main.utils.MessageType;
+
+import javax.swing.text.html.Option;
 
 import java.net.DatagramSocket;
 import java.util.List;
@@ -35,8 +42,7 @@ public class Node {
     /**
      * Utils object that handels sending messages.
      */
-    private final MessageHandler messageHandler;
-
+    public final MessageHandler messageHandler;
     /**
      * Flag to indicate if the node is currently in lease coordination phase.
      */
@@ -114,13 +120,23 @@ public class Node {
     private CrdtMerger crdtMerger;
     private ScheduledExecutorService executor;
 
-    public Node(int port, List<Integer> nodesPorts) {
+    private Config config;
+    private ScheduledExecutorService clockExecutor;
+    public FailureDetector failureDetector;
+    public LogicalClock logicalClock;
+
+    public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
         this.crdt = new LimitedResourceCrdt(nodesPorts.size());
         this.persister = new Persister(this);
 
         this.quorumSize = (nodesPorts.size() / 2) + 1;
+
+        this.config = config;
+        this.logicalClock = new LogicalClock();
+        this.clockExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.failureDetector = new FailureDetector(this, this.ownPort, nodesPorts, config);
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -145,6 +161,11 @@ public class Node {
     public void init() {
         // Persist state at beginning
         persister.persistState(false, 0, crdt, Optional.empty());
+
+        ScheduledExecutorService clockExecutor = Executors.newScheduledThreadPool(1);
+        clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tick(), TimeUnit.MILLISECONDS);
+        failureDetector.start();
+
 
         messageReceiver = new MessageReceiver(this);
         messageReceiver.start();
@@ -208,7 +229,9 @@ public class Node {
         }
     }
 
-
+    public synchronized int getTime() {
+        return this.logicalClock.getTime();
+    }
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */

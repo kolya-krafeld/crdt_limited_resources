@@ -1,5 +1,6 @@
 package test;
 
+import main.Config;
 import main.utils.MessageHandler;
 import main.jobs.MessageProcessor;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,8 @@ class MessageProcessorTest {
 
     @Test
     void testReassignLeaseBaseCase() throws SocketException, UnknownHostException {
-        Node node = new Node(8080, asList(8080, 8082, 8083));
+        Config config = new Config(100,5, 2);
+        Node node = new Node(8080, asList(8080, 8082, 8083), config);
         MessageHandler messageHandler = new MessageHandler(node, new DatagramSocket(), 8080);
 
         MessageProcessor messageProcessor = new MessageProcessor(node, messageHandler);
