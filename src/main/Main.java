@@ -29,7 +29,7 @@ public class Main {
         List<Node> nodes = new ArrayList<>();
         Node node;
         for (int i = 0; i < numberOfNodes; i++) {
-            node = new Node(ports.get(i), ports);
+            node = new Node(ports.get(i), ports, config);
             node.getCrdt().setUpper(i, 10);
             node.setLeaderPort(ports.get(0));
             node.init();

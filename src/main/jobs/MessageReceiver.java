@@ -42,7 +42,10 @@ public class MessageReceiver extends Thread {
                 node.socket.receive(receivePacket);
 
                 String receivedMessage = new String(receivePacket.getData(), 0, receivePacket.getLength());
-                logger.info("Message received from " + receivePacket.getPort() + ": " + receivedMessage);
+
+                if (!receivedMessage.contains("heartbeat")) {
+                    logger.info("Message received from " + receivePacket.getPort() + ": " + receivedMessage);
+                }
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                 // Add message to correct queue, Heartbeats get handled immediately
