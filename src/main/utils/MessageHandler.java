@@ -46,6 +46,8 @@ public class MessageHandler {
         try {
             DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, port);
             socket.send(sendPacket);
+        } catch (SocketException se) {
+            System.out.println(node.getOwnPort() + " Socket exception: " + se.getMessage());
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -74,5 +76,9 @@ public class MessageHandler {
                 }
             }
         }
+    }
+
+    public void setSocket(DatagramSocket socket) {
+        this.socket = socket;
     }
 }

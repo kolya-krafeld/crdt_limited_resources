@@ -6,7 +6,7 @@ import main.Node;
 /**
  * Thread responsible for broadcasting our current CRDT state to all nodes in the network.
  */
-public class CrdtMerger implements Runnable {
+public class CrdtMerger extends Thread {
 
     private Node node;
     private MessageHandler messageHandler;
@@ -17,8 +17,7 @@ public class CrdtMerger implements Runnable {
     }
 
     public void run() {
-        if (!node.isInCoordinationPhase()) {
-            System.out.println("Broadcasting merge.");
+        if (!node.isInCoordinationPhase() && !node.isInRestartPhase()) {
             String crdtString = node.getCrdt().toString();
             String message = "merge:" + crdtString;
             messageHandler.broadcast(message);

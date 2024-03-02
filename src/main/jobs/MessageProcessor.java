@@ -1,11 +1,8 @@
 package main.jobs;
 
-import main.utils.MessageHandler;
+import main.utils.*;
 import main.Node;
 import main.crdt.LimitedResourceCrdt;
-import main.utils.Message;
-import main.utils.MessageType;
-import main.utils.Persister;
 
 import java.util.*;
 
@@ -13,6 +10,8 @@ import java.util.*;
  * Thread responsible for processing messages from the node's message queues.
  */
 public class MessageProcessor extends Thread {
+
+    private final Logger logger;
 
     private final Node node;
     private final MessageHandler messageHandler;
@@ -50,8 +49,9 @@ public class MessageProcessor extends Thread {
 
     public MessageProcessor(Node node, MessageHandler messageHandler) {
         this.node = node;
+        this.logger = node.logger;
         this.messageHandler = messageHandler;
-        this.persister = new Persister(node);
+        this.persister = node.persister;
     }
 
 
@@ -65,8 +65,8 @@ public class MessageProcessor extends Thread {
             if (!node.coordiantionMessageQueue.isEmpty()) {
                 matchCoordinationMessage(node.coordiantionMessageQueue.poll());
 
-            } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase()) {
-                // Only process operation messages if we are not in the coordination phase
+            } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase()) {
+                // Only process operation messages if we are not in the coordination or restart phase
                 matchOperationMessage(node.operationMessageQueue.poll());
             }
         }
@@ -76,6 +76,10 @@ public class MessageProcessor extends Thread {
      * Matches coordination message to the appropriate method.
      */
     private void matchCoordinationMessage(Message message) {
+        if (message == null) {
+            // We need to filter out null messages, because we can get them during node failures
+            return;
+        }
         switch (message.getType()) {
             case REQL:
                 receiveRequestLease(message);
@@ -95,8 +99,14 @@ public class MessageProcessor extends Thread {
             case DECIDE:
                 receiveDecide(message);
                 break;
+            case REQUEST_SYNC:
+                receiveRequestSync(message);
+                break;
+            case ACCEPT_SYNC:
+                receiveAcceptSync(message);
+                break;
             default:
-                System.out.println("Unknown message: " + message);
+                logger.warn("Unknown message: " + message);
         }
     }
 
@@ -104,6 +114,10 @@ public class MessageProcessor extends Thread {
      * Matches operation message to the appropriate method.
      */
     private void matchOperationMessage(Message message) {
+        if (message == null) {
+            // We need to filter out null messages, because we can get them during node failures
+            return;
+        }
         switch (message.getType()) {
             case INC:
                 node.getCrdt().increment(node.getOwnIndex());
@@ -115,7 +129,7 @@ public class MessageProcessor extends Thread {
                 node.mergeCrdts(message.getContent());
                 break;
             default:
-                System.out.println("Unknown message: " + message.getContent());
+                logger.warn("Unknown message: " + message);
         }
     }
 
@@ -123,6 +137,40 @@ public class MessageProcessor extends Thread {
     // --------------------------------------------------------------------------------------
     // ----------------- COORDINATION MESSAGE HANDLING --------------------------------------
     // --------------------------------------------------------------------------------------
+
+    /**
+     * Leader receives request-sync from a follower that has just restarted.
+     */
+    private void receiveRequestSync(Message message) {
+        if (node.isLeader()) {
+
+            int followerRoundNumber = Integer.parseInt(message.getContent());
+            if (node.isInCoordinationPhase() && followerRoundNumber == node.getRoundNumber()) {
+                // We are still in the same coordination phase as before. We can ignore this. At the end of the phase,
+                // we will send a DECIDE message to all processes. And the follower will receive it and end the restart phase.
+            } else {
+                // We are not in the same coordination phase as before. Send accept-sync to follower.
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
+                messageHandler.send(messageStr, message.getPort());
+            }
+        }
+    }
+
+    /**
+     * Receive accept-sync from leader. Format of message: <accept-sync>:<round-number>:<crdt>
+     */
+    private void receiveAcceptSync(Message message) {
+        if (!node.isLeader()) {
+
+            String[] messageParts = message.getContent().split(":");
+            int leaderRoundNumber = Integer.parseInt(messageParts[0]);
+            String crdtString = messageParts[1];
+            node.mergeCrdts(crdtString);
+            node.setRoundNumber(leaderRoundNumber);
+            node.setLeaderPort(message.getPort());
+            node.setInRestartPhase(false);
+        }
+    }
 
     /**
      * Leader receives request lease from follower.
@@ -134,16 +182,21 @@ public class MessageProcessor extends Thread {
 
             // We have been in operation phase before
             if (!node.isInCoordinationPhase()) {
+                persister.persistState(true, 0, node.getCrdt(), Optional.empty());
                 node.setInCoordinationPhase(true);
                 leaderMergedCrdt = node.getCrdt(); // set leader crdt first
                 leaseRequestFrom.clear();
 
+                leaseRequestFrom.add(message.getPort());
+
                 // Send Request State to all other nodes
                 this.lastRequestStateSent = System.currentTimeMillis();
                 messageHandler.broadcastWithIgnore(MessageType.REQS.getTitle(), node.getNodesPorts(), leaseRequestFrom);
+            } else {
+                // We are already in coordination phase.
+                leaseRequestFrom.add(message.getPort());
             }
 
-            leaseRequestFrom.add(message.getPort());
             // Receiving request-lease is treated like receiving a state message
             receiveState(message);
         }
@@ -155,9 +208,12 @@ public class MessageProcessor extends Thread {
      * 2. Send state to leader
      */
     private void receiveRequestState() {
-        node.setInCoordinationPhase(true);
-        String outMessage = MessageType.STATE.getTitle() + ":" + node.getCrdt().toString();
-        messageHandler.sendToLeader(outMessage);
+        if (!node.isInRestartPhase()) {
+            persister.persistState(true, 0, node.getCrdt(), Optional.empty());
+            node.setInCoordinationPhase(true);
+            String outMessage = MessageType.STATE.getTitle() + ":" + node.getCrdt().toString();
+            messageHandler.sendToLeader(outMessage);
+        }
     }
 
     /**
@@ -177,8 +233,7 @@ public class MessageProcessor extends Thread {
             if (isReadyToProcessNextCoordinationPhase(statesReceivedFrom.size(), lastRequestStateSent)) {
                 // Reassign leases
                 reassignLeases();
-                System.out.println("Leader proposes state: " + leaderMergedCrdt);
-
+                logger.debug("Leader proposes state: " + leaderMergedCrdt);
 
                 // Send ACCEPT to all nodes
                 this.lastAcceptSent = System.currentTimeMillis();
@@ -199,13 +254,13 @@ public class MessageProcessor extends Thread {
     private boolean isReadyToProcessNextCoordinationPhase(int messagesReceivedFrom, long lastMessageSent) {
         // +1 is for leader
         if (messagesReceivedFrom + 1 == node.getNodesPorts().size()) {
-            System.out.println("Received messages from all nodes.");
+            logger.debug("Received messages from all nodes.");
             return true;
         }
         // +1 is for leader
         if (messagesReceivedFrom + 1 >= node.getQuorumSize()
                 && System.currentTimeMillis() > messageWaitTime + lastMessageSent) {
-            System.out.println("Received messages from quorum of nodes after wait time had passed.");
+            logger.debug("Received messages from quorum of nodes after wait time had passed.");
             return true;
         }
 
@@ -218,11 +273,13 @@ public class MessageProcessor extends Thread {
      * 2. Send accepted to leader
      */
     private void receiveAccept(Message message) {
-        node.setAcceptedCrdt(new LimitedResourceCrdt(message.getContent()));
-        // Persist state before sending ACCEPTED to leader
-        persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+        if (!node.isInRestartPhase()) {
+            node.setAcceptedCrdt(new LimitedResourceCrdt(message.getContent()));
+            // Persist state before sending ACCEPTED to leader
+            persister.persistState(true, 0, node.getCrdt(), node.getAcceptedCrdt());
 
-        messageHandler.sendToLeader(MessageType.ACCEPTED.getTitle());
+            messageHandler.sendToLeader(MessageType.ACCEPTED.getTitle());
+        }
     }
 
     /**
@@ -236,7 +293,7 @@ public class MessageProcessor extends Thread {
             numberOfAccepted++;
             if (isReadyToProcessNextCoordinationPhase(numberOfAccepted, lastAcceptSent)) {
                 // Persist state before sending DECIDE to all nodes
-                persister.persistState(node.getCrdt(), Optional.empty());
+                persister.persistState(false, 0, node.getCrdt(), Optional.empty());
 
                 String message = MessageType.DECIDE.getTitle() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(message);
@@ -271,9 +328,14 @@ public class MessageProcessor extends Thread {
 
         node.getCrdt().merge(mergingCrdt);
         // Persist state after merging
-        persister.persistState(node.getCrdt(), Optional.empty());
+        persister.persistState(false, 0, node.getCrdt(), Optional.empty());
 
-        System.out.println("Received decided state: " + message.getContent());
+        if (node.isInRestartPhase()) {
+            node.setLeaderPort(message.getPort()); // If we were in restart phase we need to update leader port
+            node.setInRestartPhase(false); // End of restart phase, if we were in it
+        }
+
+        logger.info("Received decided state: " + message.getContent());
         node.setInCoordinationPhase(false); // End of coordination phase
     }
 
@@ -304,15 +366,20 @@ public class MessageProcessor extends Thread {
             }
         }
 
-        System.out.println("Available resources: " + availableResources);
+        logger.info("Available resources: " + availableResources);
 
         // We will set the lower bound for all active processes to highest lower bound
         int highestLowerBound = leaderMergedCrdt.getLowerCounter().stream().max(Integer::compare).get();
 
         int amountOfStates = statesReceivedFrom.size() + 1; // +1 for the leader
 
-        if (availableResources >= amountOfStates) {
+        if (availableResources == 0) {
+            // We are out of resources now
+            node.setOutOfResources(true);
+        } else if (availableResources >= amountOfStates) {
             // BASE CASE: We have more resources than nodes. We can assign the resources to the nodes directly.
+            node.setFinalResources(false);
+            node.setOutOfResources(false);
 
             int resourcesPerNode = availableResources / amountOfStates;
             int resourcesLeft = availableResources % amountOfStates;
@@ -372,10 +439,10 @@ public class MessageProcessor extends Thread {
 
         // Out of resources: deny request straight away.
         if (node.isOutOfResources()) {
-            System.out.println("Out of resources. Cannot decrement counter.");
+            logger.info("Out of resources. Cannot decrement counter.");
 
             // Notify client about unsuccessful decrement
-            messageHandler.send(MessageType.DENYR.getTitle(), message.getPort());
+            messageHandler.send(MessageType.DENY_RES.getTitle(), message.getPort());
             return;
         }
 
@@ -385,9 +452,7 @@ public class MessageProcessor extends Thread {
         if (ownResourcesLeft == 0 && node.isFinalResources()) {
             // We are in final resource mode and have no resources assigned. We need to ask the leader for every new lease.
 
-            node.setInCoordinationPhase(true);
-            String outMessage = MessageType.REQL.getTitle() + ":" + node.getCrdt().toString();
-            messageHandler.sendToLeader(outMessage);
+            requestLeases();
 
             // Put message right back at the front of the queue, so it will be processed next.
             node.operationMessageQueue.addFirst(message);
@@ -397,33 +462,55 @@ public class MessageProcessor extends Thread {
 
             node.getCrdt().decrement(node.getOwnIndex());
             // Persist state before sending APPROVE to client
-            persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+            persister.persistState(false, 0, node.getCrdt(), node.getAcceptedCrdt());
 
             // Notify client about successful decrement
-            messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
+            messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
         } else {
             // BASE CASE: we have resources assigned
 
             boolean successful = node.getCrdt().decrement(node.getOwnIndex());
             if (!successful) {
-                System.out.println("Could not decrement counter.");
+                logger.error("Could not decrement counter.");
                 // todo send request for lease
             } else {
                 // Persist state before sending APPROVE to client
-                persister.persistState(node.getCrdt(), node.getAcceptedCrdt());
+                persister.persistState(false, 0, node.getCrdt(), node.getAcceptedCrdt());
 
                 // Notify client about successful decrement
-                messageHandler.send(MessageType.APPROVER.getTitle(), message.getPort());
+                messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
 
                 // Query CRDT and request leases if we have no leases left
                 ownResourcesLeft = node.getCrdt().queryProcess(node.getOwnIndex());
                 if (ownResourcesLeft == 0) {
-                    System.out.println("No resources left.");
-                    node.setInCoordinationPhase(true);
-                    String outMessage = MessageType.REQL.getTitle() + ":" + node.getCrdt().toString();
-                    messageHandler.sendToLeader(outMessage);
+                    logger.info("No resources left.");
+                    requestLeases();
                 }
             }
+        }
+    }
+
+    /**
+     * Request leases.
+     * As a follower sendd <REQL> to leader.
+     * As a leader send <REQS> to all nodes.
+     */
+    private void requestLeases() {
+        persister.persistState(true, 0, node.getCrdt(), Optional.empty());
+        node.setInCoordinationPhase(true);
+
+        if (node.isLeader()) {
+            // Prepare coordination phase
+            leaderMergedCrdt = node.getCrdt(); // set leader crdt first
+            leaseRequestFrom.clear();
+            leaseRequestFrom.add(node.getOwnPort());
+
+            this.lastRequestStateSent = System.currentTimeMillis();
+            // Send Request State to all other nodes
+            messageHandler.broadcast(MessageType.REQS.getTitle());
+        } else {
+            String outMessage = MessageType.REQL.getTitle() + ":" + node.getCrdt().toString();
+            messageHandler.sendToLeader(outMessage);
         }
     }
 

@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -14,48 +15,52 @@ import java.util.concurrent.TimeUnit;
 
 public class Main {
     public static void main(String[] args) throws Exception {
-        List<Integer> ports = List.of(8000, 8001, 8002);
-        Node node1 = new Node(8000, ports);
-        node1.getCrdt().setUpper(0, 10);
-        node1.getCrdt().setUpper(1, 10);
-        node1.setLeaderPort(8000);
-        node1.init();
 
-        Node node2 = new Node(8001, ports);
-        node2.getCrdt().setUpper(0, 10);
-        node2.getCrdt().setUpper(1, 10);
-        node2.setLeaderPort(8000);
-        node2.init();
+        int numberOfNodes = 3;
+        List<Integer> ports = new ArrayList<>();
+        // Set ports
+        for (int i = 0; i < numberOfNodes; i++) {
+            ports.add(8000 + i);
+        }
 
-        Node node3 = new Node(8002, ports);
-        node3.getCrdt().setUpper(0, 10);
-        node3.getCrdt().setUpper(2, 10);
-        node3.setLeaderPort(8000);
-        node3.init();
+        // Create nodes
+        List<Node> nodes = new ArrayList<>();
+        Node node;
+        for (int i = 0; i < numberOfNodes; i++) {
+            node = new Node(ports.get(i), ports);
+            node.getCrdt().setUpper(i, 10);
+            node.setLeaderPort(ports.get(0));
+            node.init();
+            nodes.add(node);
+        }
 
-        Client client = new Client(node1, node2);
+        Client client = new Client(ports, nodes);
         client.init();
 
-
-//        CrdtChanger2 crdtChanger = new CrdtChanger2(node1, node2);
-//
-//        ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
-//        executor.scheduleAtFixedRate(crdtChanger, 2, 1, TimeUnit.SECONDS);
     }
 
     static class Client {
 
-        private final Node node1;
-        private final Node node2;
+        enum Mode {
+            RANDOM,
+            ONLY_LEADER,
+            ONLY_FOLLOWER
+        }
+
+        private final Mode mode = Mode.RANDOM;
+
+        private final List<Integer> nodePorts;
+        private final List<Node> nodes;
         private final DatagramSocket socket;
 
         private int resourcesRequested = 0;
         private int resourcesReceived = 0;
         private int resourcesDenied = 0;
 
-        public Client(Node node1, Node node2) {
-            this.node1 = node1;
-            this.node2 = node2;
+        public Client(List<Integer> nodePorts, List<Node> nodes) {
+            this.nodePorts = nodePorts;
+            this.nodes = nodes;
+
             try {
                 this.socket = new DatagramSocket(8080);
             } catch (IOException e) {
@@ -64,15 +69,16 @@ public class Main {
         }
 
         public void init() {
-
             MessageReceiver messageReceiver = new MessageReceiver();
             messageReceiver.start();
 
-            ResourceRequester resourceRequester = new ResourceRequester();
             StatePrinter statePrinter = new StatePrinter();
-            ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
+            NodeKiller nodeKiller = new NodeKiller();
+            ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
             //executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
             executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
+            executor.scheduleAtFixedRate(nodeKiller, 6, 15, TimeUnit.SECONDS);
+
 
             try {
                 Thread.sleep(2000);
@@ -88,9 +94,18 @@ public class Main {
 
         public void requestResource() {
             byte[] buf = "decrement".getBytes();
+            int indexOfNode = 0;
+            if (mode == Mode.RANDOM) {
+                indexOfNode = (int) (Math.random() * nodePorts.size());
+            } else if (mode == Mode.ONLY_LEADER) {
+                indexOfNode = 0;
+            } else if (mode == Mode.ONLY_FOLLOWER) {
+                indexOfNode = 1;
+            }
+
             try {
                 InetAddress ip = InetAddress.getByName("localhost");
-                DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, 8001);
+                DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, nodePorts.get(indexOfNode));
                 socket.send(sendPacket);
                 resourcesRequested++;
             } catch (IOException e) {
@@ -99,20 +114,30 @@ public class Main {
         }
 
         /**
-         * Requests resources from the nodes.
+         * Kills random follower node at specific interval.
          */
-        class ResourceRequester implements Runnable {
+        class NodeKiller extends Thread {
 
             public void run() {
-                byte[] buf = "decrement".getBytes();
-                try {
-                    InetAddress ip = InetAddress.getByName("localhost");
-                    DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, 8001);
-                    socket.send(sendPacket);
-                    resourcesRequested++;
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+                // Get random number between 1 and nodes.size()
+                //int random = (int) (Math.random() * (nodes.size() - 1)) +1;
+                int random = 1;
+
+                Node node = nodes.get(random);
+                if (node.isLeader()) {
+                    return;
                 }
+                System.out.println("Killing node: " + node.getOwnPort());
+                node.kill();
+
+                // Sleep for 1 sec
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
+                node.restart();
             }
         }
 
@@ -148,9 +173,9 @@ public class Main {
                         System.out.println("Message from Node: " + receivedMessage);
                         Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
-                        if (message.getType().equals(MessageType.DENYR)) {
+                        if (message.getType().equals(MessageType.DENY_RES)) {
                             resourcesDenied++;
-                        } else if (message.getType().equals(MessageType.APPROVER)) {
+                        } else if (message.getType().equals(MessageType.APPROVE_RES)) {
                             resourcesReceived++;
                         }
                     }
@@ -161,35 +186,5 @@ public class Main {
         }
 
     }
-
-    // Just used for test purposes to see what happens when we are constantly changing the CRDTs.
-    static class CrdtChanger2 implements Runnable {
-
-        private final Node node1;
-        private final Node node2;
-        private final DatagramSocket socket;
-
-        public CrdtChanger2(Node node1, Node node2) {
-            this.node1 = node1;
-            this.node2 = node2;
-            try {
-                this.socket = new DatagramSocket(8080);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        public void run() {
-            byte[] buf = "decrement".getBytes();
-            try {
-                InetAddress ip = InetAddress.getByName("localhost");
-                DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, 8001);
-                socket.send(sendPacket);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
-    }
-
 
 }
