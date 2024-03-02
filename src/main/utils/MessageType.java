@@ -6,6 +6,8 @@ public enum MessageType {
     HEARTBEAT_PING("heartbeat_ping", false),
     HEARTBEAT_PONG("heartbeat_pong", false),
     MERGE("merge", false),
+
+    // Coordination messages
     REQL("request-lease", true),
     REQS("request-state", true),
     STATE("state", true),
@@ -13,17 +15,22 @@ public enum MessageType {
     ACCEPTED("accepted", true),
     DECIDE("decide", true),
 
+    // Restarts
+    REQUEST_SYNC("request-sync", true),
+    ACCEPT_SYNC("accept-sync", true),
+
     // Client messages
     INC("increment", false),
     DEC("decrement", false),
-    APPROVER("approve-resource", false),
-    DENYR("deny-resource", false);
+    APPROVE_RES("approve-resource", false),
+    DENY_RES("deny-resource", false);
 
 
     private final String title;
     private final boolean coordinationMessage;
 
-    private MessageType(String title, boolean coordinationMessage) {
+
+    MessageType(String title, boolean coordinationMessage) {
         this.title = title;
         this.coordinationMessage = coordinationMessage;
     }

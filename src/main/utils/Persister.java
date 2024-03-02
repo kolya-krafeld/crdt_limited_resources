@@ -3,9 +3,7 @@ package main.utils;
 import main.Node;
 import main.crdt.LimitedResourceCrdt;
 
-import java.io.BufferedOutputStream;
-import java.io.DataOutputStream;
-import java.io.FileOutputStream;
+import java.io.*;
 import java.util.Optional;
 
 /**
@@ -21,8 +19,13 @@ public class Persister {
         this.node = node;
     }
 
-    public void persistState(LimitedResourceCrdt state, Optional<LimitedResourceCrdt> acceptedState) {
-        String output = "state:" + state.toString();
+    /**
+     * Persists current state of the node to a local file.
+     */
+    public void persistState(boolean inCoordinationPhase, int roundNumber, LimitedResourceCrdt state, Optional<LimitedResourceCrdt> acceptedState) {
+        String output = "inCoordinationPhase:" + inCoordinationPhase + "\n";
+        output += "roundNumber:" + roundNumber + "\n";
+        output += "state:" + state.toString();
         if (acceptedState.isPresent()) {
             output += "\nacceptedState:" + acceptedState.get().toString();
         }
@@ -39,4 +42,45 @@ public class Persister {
             throw new RuntimeException(e);
         }
     }
+
+    /**
+     * Reads state from file and sets it in the node.
+     */
+    public void loadState() {
+        // Read state from file
+        try {
+            File file = new File(String.format(FILEPATH, node.getOwnPort()));
+
+            BufferedReader br = new BufferedReader(new FileReader(file));
+
+            // Read every line one by one
+            String line;
+            while ((line = br.readLine()) != null) {
+                setLoadedState(line);
+            }
+        } catch (Exception e) {
+            System.out.println("Error reading from file");
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void setLoadedState(String line) {
+        String[] keyValue = line.split(":");
+        switch(keyValue[0]) {
+            case "inCoordinationPhase":
+                node.setInCoordinationPhase(Boolean.parseBoolean(keyValue[1]));
+                break;
+            case "roundNumber":
+                node.setRoundNumber(Integer.parseInt(keyValue[1]));
+                break;
+            case "state":
+                node.setCrdt(new LimitedResourceCrdt(keyValue[1]));
+                break;
+            case "acceptedState":
+                node.setAcceptedCrdt(new LimitedResourceCrdt(keyValue[1]));
+                break;
+        }
+    }
+
+
 }

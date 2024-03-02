@@ -15,9 +15,9 @@ public class Message {
 
         // Some messages contain ':', others don't. Get message type from whole message string or only substring before ':'
         if (messageStr.contains(":")) {
-            String[] parts = messageStr.split(":");
-            this.type = MessageType.titleToMessageType(parts[0]);
-            this.content = parts[1];
+            int indexOfFirstColon = messageStr.indexOf(":");
+            this.type = MessageType.titleToMessageType(messageStr.substring(0, indexOfFirstColon));
+            this.content = messageStr.substring(indexOfFirstColon + 1);
         } else {
             this.type = MessageType.titleToMessageType(messageStr);
         }
