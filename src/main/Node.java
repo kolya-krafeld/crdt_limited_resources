@@ -50,7 +50,7 @@ public class Node {
     /**
      * Is set when we have less resources than processes, so every lease needs a coordination phase.
      */
-    boolean finalResources = false; //todo might not be needed
+    boolean finalResources = false;
 
     boolean outOfResources = false;
 
