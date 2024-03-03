@@ -59,15 +59,14 @@ public class FailureDetector extends Thread {
             }
 
         } catch (InterruptedException e) {
-            e.printStackTrace();
-
+            logger.error("FailureDetector was interrupted!");
         }
     }
 
     private void sendHeartbeatRequest() {
         for (int receiverNode : this.allNodes) {
             HeartbeatMessage heartBeatMessage = new HeartbeatMessage(this.node.isQuorumConnected(), node.ballotNumber);
-            String message = MessageType.HBRequest.getTitle() + ":" + heartBeatMessage.toString();
+            String message = MessageType.HB_REQUEST.getTitle() + ":" + heartBeatMessage.toString();
             node.messageHandler.send(message, receiverNode);
             sendHeartbeatPingAtTime.put(receiverNode, node.getTime());
         }
@@ -119,7 +118,7 @@ public class FailureDetector extends Thread {
 
     public void sendHeartbeatReply(int port) {
         HeartbeatMessage message = new HeartbeatMessage(node.isQuorumConnected(), node.ballotNumber);
-        String messageStr = MessageType.HBReply.getTitle() + ":" + message.toString();
+        String messageStr = MessageType.HB_REPLY.getTitle() + ":" + message.toString();
         node.messageHandler.send(messageStr, port);
     }
 }

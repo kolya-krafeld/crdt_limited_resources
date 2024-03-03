@@ -5,14 +5,17 @@ import main.utils.Logger;
 import main.utils.Message;
 import main.utils.MessageType;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class BallotLeaderElection {
     private final Logger logger;
+    public int rnd;
     private Node node;
     private int timeout;
-    public int rnd;
     private Set<BallotEntry> ballotEntries = new LinkedHashSet<>();
 
     public BallotLeaderElection(Node node, int timeout) {
@@ -35,7 +38,7 @@ public class BallotLeaderElection {
     }
 
     private boolean roundOfLeaderElection() {
-        String message = MessageType.ELECTIONREQUEST.getTitle() + ":" + rnd;
+        String message = MessageType.ELECTION_REQUEST.getTitle() + ":" + rnd;
         node.messageHandler.broadcastIncludingSelf(message);
         int startTime = node.getTime();
         while (node.getTime() - startTime < timeout) {
@@ -44,7 +47,7 @@ public class BallotLeaderElection {
                 break;
             }
         }
-        logger.info("LeaderElection: got " + ballotEntries.size() + "out of " + this.node.getNodesPorts().size() + " election messages");
+        logger.info("LeaderElection: got " + ballotEntries.size() + " out of " + this.node.getNodesPorts().size() + " election messages");
         if (ballotEntries.size() >= this.node.getQuorumSize()) {
             logger.info("LeaderElection: got quorum");
             if (checkLeader()) {
@@ -71,13 +74,13 @@ public class BallotLeaderElection {
             logger.info("LeaderElection: Highest candidate: ID " + maxCandidate.id + " with ballot number " + maxCandidate.ballotNumber);
             if (maxCandidate.ballotNumber <= this.node.leaderBallotNumber) {
                 this.node.ballotNumber = this.node.leaderBallotNumber + 1;
-                logger.info("LeaderElection: No candidate with higher ballot number, increasing own ballot number to " + (this.node.ballotNumber) +" and starting new election");
+                logger.info("LeaderElection: No candidate with higher ballot number, increasing own ballot number to " + (this.node.ballotNumber) + " and starting new election");
                 this.node.setQuorumConnected(true);
                 return false;
-            } else if(maxCandidate.ballotNumber>this.node.leaderBallotNumber) {
+            } else if (maxCandidate.ballotNumber > this.node.leaderBallotNumber) {
                 this.node.leaderBallotNumber = maxCandidate.ballotNumber;
                 this.node.logger.info("LeaderElection: FOUND LEADER: ID " + maxCandidate.id + " with ballot number " + maxCandidate.ballotNumber);
-                String message = MessageType.ELECTIONRESULT.getTitle() + ":" + maxCandidate.id + "," + maxCandidate.ballotNumber;
+                String message = MessageType.ELECTION_RESULT.getTitle() + ":" + maxCandidate.id + "," + maxCandidate.ballotNumber;
                 node.messageHandler.broadcastIncludingSelf(message);
                 return true;
             }

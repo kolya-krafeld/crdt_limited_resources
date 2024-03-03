@@ -10,15 +10,6 @@ import java.util.*;
 
 
 /**
- * Functional interface for triggering a function after a certain time.
- */
-@FunctionalInterface
-interface Function {
-    void apply();
-}
-
-
-/**
  * Thread responsible for processing messages from the node's message queues.
  */
 public class MessageProcessor extends Thread {
@@ -28,12 +19,11 @@ public class MessageProcessor extends Thread {
     private final Node node;
     private final MessageHandler messageHandler;
     private final Persister persister;
-
+    private final long messageWaitTime = 100;
     /**
      * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
      */
     private LimitedResourceCrdt leaderMergedCrdt = null;
-
     /**
      * Set of all nodes (ports) that we have received a state from.
      */
@@ -45,17 +35,23 @@ public class MessageProcessor extends Thread {
     private int numberOfAccepted = 0;
 
     /**
+     * Number of promise messages received from followers in the current prepare phase.
+     */
+    private int numberOfPromises = 0;
+
+    /**
      * Indicates which nodes have sent us the latest request for lease.
      * In one coordination phase multiple lease requests can be received.
      */
     private List<Integer> leaseRequestFrom = new ArrayList<>();
 
     /**
-     * Timestamp when the last request for state/accept was broadcasted.
+     * Timestamp when the last request for state/accept/prepare was broadcasted.
      * Used to see whether we need to wait for more messages.
      */
     private long lastRequestStateSent = 0;
     private long lastAcceptSent = 0;
+    private long lastPrepareSent = 0;
 
     /**
      * Round when the last accepted/decide was send. Prevents sending accepted messages multiple times in one round.
@@ -63,7 +59,15 @@ public class MessageProcessor extends Thread {
     private int lastAcceptRoundSend = 0;
     private int lastDecideRoundSend = 0;
 
-    private final long messageWaitTime = 100;
+    /**
+     * Flag to indicate that we have already sent an accept-sync message in this prepare phase.
+     */
+    private boolean prepareAcceptSyncAlreadySent = false;
+
+    /**
+     * Max round number received by followers in the prepare phase.
+     */
+    private int maxRoundNumberInPreparePhase = 0;
 
     public MessageProcessor(Node node, MessageHandler messageHandler) {
         this.node = node;
@@ -83,9 +87,11 @@ public class MessageProcessor extends Thread {
             if (!node.heartbeatAndElectionMessageQueue.isEmpty()) {
                 matchHeartbeatAndElectionMessage(node.heartbeatAndElectionMessageQueue.poll());
             }
-            if (!node.coordiantionMessageQueue.isEmpty()) {
-                matchCoordinationMessage(node.coordiantionMessageQueue.poll());
-
+            if (!node.preparePhaseMessageQueue.isEmpty() && node.isLeader() && node.isInPreparePhase()) {
+                matchPreparePhaseMessage(node.preparePhaseMessageQueue.poll());
+            }
+            if (!node.coordinationMessageQueue.isEmpty()) {
+                matchCoordinationMessage(node.coordinationMessageQueue.poll());
             } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase()) {
                 // Only process operation messages if we are not in the coordination or restart phase
                 matchOperationMessage(node.operationMessageQueue.poll());
@@ -120,11 +126,31 @@ public class MessageProcessor extends Thread {
             case DECIDE:
                 receiveDecide(message);
                 break;
+            case PREPARE:
+                receivedPrepare();
+                break;
             case REQUEST_SYNC:
                 receiveRequestSync(message);
                 break;
             case ACCEPT_SYNC:
                 receiveAcceptSync(message);
+                break;
+            default:
+                logger.warn("Unknown message: " + message);
+        }
+    }
+
+    /**
+     * Matches prepare phase message to the appropriate method. Only used by a newly elected leader.
+     */
+    private void matchPreparePhaseMessage(Message message) {
+        if (message == null) {
+            // We need to filter out null messages, because we can get them during node failures
+            return;
+        }
+        switch (message.getType()) {
+            case PROMISE:
+                receivePromise(message);
                 break;
             default:
                 logger.warn("Unknown message: " + message);
@@ -154,30 +180,117 @@ public class MessageProcessor extends Thread {
         }
     }
 
+    /**
+     * Matches heartbeat and election messages to the appropriate method.
+     */
     void matchHeartbeatAndElectionMessage(Message message) {
+        if (message == null) {
+            // We need to filter out null messages, because we can get them during node failures
+            return;
+        }
         switch (message.getType()) {
-            case HBRequest:
+            case HB_REQUEST:
                 node.failureDetector.sendHeartbeatReply(message.getPort());
                 break;
-            case HBReply:
+            case HB_REPLY:
                 node.failureDetector.updateNodeStatus(message.getPort(), HeartbeatMessage.fromString(message.getContent()));
                 break;
-            case ELECTIONREQUEST:
+            case ELECTION_REQUEST:
                 handleElectionRequest(message);
                 break;
-            case ELECTIONREPLY:
+            case ELECTION_REPLY:
                 node.ballotLeaderElection.handleElectionReply(message);
                 break;
-            case ELECTIONRESULT:
+            case ELECTION_RESULT:
                 handleElectionResult(message.getContent());
                 break;
             default:
-                logger.info("Unknown message from :"+message.getPort()+" : Type: " + message.getType() + " Content: " + message.getContent());
+                logger.info("Unknown message from :" + message.getPort() + " : Type: " + message.getType() + " Content: " + message.getContent());
         }
     }
 
+    // --------------------------------------------------------------------------------------
+    // ----------------- PREPARE PHASE MESSAGE HANDLING -------------------------------------
+    // --------------------------------------------------------------------------------------
 
+    /**
+     * Newly elected leader receives promise from follower.
+     * Needs to wait message timeout period or until it receives promise from a majority before sending <accept-sync>.
+     */
+    private void receivePromise(Message message) {
+        if (node.isLeader()) {
+            String[] messageParts = message.getContent().split(":");
+            int roundNumber = Integer.parseInt(messageParts[0]);
+            String crdtString = messageParts[1];
 
+            // Check if we received prepare even though the prepare phase has ended
+            if (!node.isInPreparePhase()) {
+                logger.debug("Received old promise message.");
+                // Send accept-sync to follower.
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
+                messageHandler.send(messageStr, message.getPort());
+                return;
+            }
+
+            numberOfPromises++;
+
+            maxRoundNumberInPreparePhase = Math.max(maxRoundNumberInPreparePhase, roundNumber);
+
+            LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
+            leaderMergedCrdt.merge(state);
+            statesReceivedFrom.add(message.getPort());
+
+            Function processPrepareMajority = () -> {
+                if (prepareAcceptSyncAlreadySent) {
+                    // We have already sent an accepted message in this round. We can ignore this.
+                    logger.debug("We have already sent a accept-sync message in this prepare phase.");
+                    return;
+                }
+
+                // Set new round number
+                node.setRoundNumber(maxRoundNumberInPreparePhase);
+                node.setLastDecideRoundNumber(maxRoundNumberInPreparePhase);
+
+                // Send ACCEPT-SYNC to all nodes
+                String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString();
+                messageHandler.broadcast(outMessage);
+
+                // Reset number of promises
+                numberOfPromises = 0;
+            };
+
+            triggerNextCoordinationStateWhenReady(numberOfPromises, lastPrepareSent, processPrepareMajority);
+        }
+    }
+
+    /**
+     * Follower receives prepare from new leader.
+     * Send current state and latest accepted state to leader.
+     */
+    private void receivedPrepare() {
+        if (!node.isLeader()) {
+            // Get accepted crdt or otherwise the current crdt
+            LimitedResourceCrdt crdt = node.getAcceptedCrdt().orElse(node.getCrdt());
+
+            String message = MessageType.PROMISE.getTitle() + ":" + node.getRoundNumber() + ":" + crdt;
+            messageHandler.sendToLeader(message);
+        }
+    }
+
+    /**
+     * Newly elected leader starts prepare phase by sending prepare message to all nodes.
+     */
+    private void startPreparePhase() {
+        node.setInPreparePhase(true);
+
+        leaderMergedCrdt = node.getCrdt(); // set leader crdt first
+        this.lastPrepareSent = System.currentTimeMillis();
+        prepareAcceptSyncAlreadySent = false; // Reset flag
+
+        // Send prepare message to all nodes
+        String message = MessageType.PREPARE.getTitle();
+        messageHandler.broadcast(message);
+    }
 
     // --------------------------------------------------------------------------------------
     // ----------------- COORDINATION MESSAGE HANDLING --------------------------------------
@@ -219,6 +332,7 @@ public class MessageProcessor extends Thread {
 
             node.setLeaderPort(message.getPort());
             node.setInRestartPhase(false);
+            node.setInCoordinationPhase(false); // Stop coordination phase after receiving accept-sync
         }
     }
 
@@ -253,7 +367,7 @@ public class MessageProcessor extends Thread {
             }
 
             // Receiving request-lease is treated like receiving a state message
-            String internalStateMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() +  ":" + message.getContent();
+            String internalStateMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() + ":" + message.getContent();
             receiveState(new Message(message.getAddress(), message.getPort(), internalStateMessage));
         }
     }
@@ -272,25 +386,19 @@ public class MessageProcessor extends Thread {
             persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
             node.setInCoordinationPhase(true);
 
-            // Delay message send
-            delaysMessageSent();
+            // Function that sends state message. Is triggered below (either after delay or immediately)
+            Function sendStateMessage = () -> {
+                String outMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() + ":" + node.getCrdt().toString();
+                messageHandler.sendToLeader(outMessage);
+            };
 
-            String outMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() +  ":" + node.getCrdt().toString();
-            messageHandler.sendToLeader(outMessage);
-        }
-    }
-
-    /**
-     * Method used to simulate delays in message sending.
-     */
-    private void delaysMessageSent() {
-        int delayInSeconds = 5;
-        if (node.isAddMessageDelay()) {
-            try {
-                Thread.sleep(delayInSeconds * 1000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+            // Either delay the message sending or send it straight away
+            if (node.isAddMessageDelay()) {
+                delaysMessageSent(sendStateMessage);
+            } else {
+                sendStateMessage.apply();
             }
+
         }
     }
 
@@ -332,7 +440,7 @@ public class MessageProcessor extends Thread {
                 // Send ACCEPT to all nodes
                 this.lastAcceptSent = System.currentTimeMillis();
                 this.lastAcceptRoundSend = node.getRoundNumber();
-                String outMessage = MessageType.ACCEPT.getTitle() +":" + node.getRoundNumber() + ":" + leaderMergedCrdt.toString();
+                String outMessage = MessageType.ACCEPT.getTitle() + ":" + node.getRoundNumber() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(outMessage);
 
                 // Reset state variables
@@ -344,10 +452,10 @@ public class MessageProcessor extends Thread {
     }
 
     /**
-     * Decides whether we are ready to process next coordination phase: e.g. after request state or accept.
-     * Case 1: We have received STATE/ACCEPTED message from all nodes.
-     * Case 2: We have received STATE/ACCEPTED message from a quorum of nodes and we have passed the wait time.
-     * Case 3: We have received STATE/ACCEPTED message from a quorum of nodes but we have not passed the wait time yet.
+     * Decides whether we are ready to process next coordination phase: e.g. after request state, accept or promise.
+     * Case 1: We have received STATE/ACCEPTED/PROMISE message from all nodes.
+     * Case 2: We have received STATE/ACCEPTED/PROMISE message from a quorum of nodes and we have passed the wait time.
+     * Case 3: We have received STATE/ACCEPTED/PROMISE message from a quorum of nodes but we have not passed the wait time yet.
      * -> Start a new thread that waits for the remaining time and then triggers the function.
      */
     private void triggerNextCoordinationStateWhenReady(int messagesReceivedFrom, long lastMessageSent, Function function) {
@@ -357,6 +465,7 @@ public class MessageProcessor extends Thread {
 
             // Trigger function
             function.apply();
+            return;
         }
         // +1 is for leader
         if (messagesReceivedFrom + 1 >= node.getQuorumSize()
@@ -369,7 +478,7 @@ public class MessageProcessor extends Thread {
 
             // Trigger function
             long waitTime = messageWaitTime + lastMessageSent - System.currentTimeMillis(); // This is how long we have to wait before triggering the function
-            MessageWaitTimeTrigger messageWaitTimeTrigger = new MessageWaitTimeTrigger(waitTime, function);
+            WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(waitTime, function);
             messageWaitTimeTrigger.start();
         }
     }
@@ -392,11 +501,18 @@ public class MessageProcessor extends Thread {
             // Persist state before sending ACCEPTED to leader
             persister.persistState(true, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
-            // Delay message send
-            delaysMessageSent();
+            // Function that sends accepted message. Is triggered below (either after delay or immediately)
+            Function sendAcceptedMessage = () -> {
+                String messageStr = MessageType.ACCEPTED.getTitle() + ":" + node.getRoundNumber();
+                messageHandler.sendToLeader(messageStr);
+            };
 
-            String messageStr = MessageType.ACCEPTED.getTitle() + ":" + node.getRoundNumber();
-            messageHandler.sendToLeader(messageStr);
+            // Send message with delay or immediately
+            if (node.isAddMessageDelay()) {
+                delaysMessageSent(sendAcceptedMessage);
+            } else {
+                sendAcceptedMessage.apply();
+            }
         }
     }
 
@@ -474,6 +590,7 @@ public class MessageProcessor extends Thread {
         }
 
         node.getCrdt().merge(mergingCrdt);
+        node.setAcceptedCrdt(null); // Reset accepted CRDT because it was decided now
         // Persist state after merging
         persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
@@ -498,7 +615,7 @@ public class MessageProcessor extends Thread {
      * Send decide with current leader state to node that we got an old message from.
      */
     private void sendDecideForOldMessage(Message message) {
-        String outMessage = MessageType.DECIDE.getTitle() +":" + node.getLastDecideRoundNumber() +  ":" + node.getCrdt().toString();
+        String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
         messageHandler.send(outMessage, message.getPort());
     }
 
@@ -591,17 +708,18 @@ public class MessageProcessor extends Thread {
         }
     }
 
+
     // --------------------------------------------------------------------------------------
     // ----------------- OPERATION MESSAGE HANDLING --------------------------------------
     // --------------------------------------------------------------------------------------
-
     /**
      * Receive decrement message from client.
      */
     private void receiveDecrement(Message message) {
 
         // Out of resources: deny request straight away.
-        if (node.isOutOfResources()) {
+        // We need to double check if node is really out of resources
+        if (node.isOutOfResources() && node.getCrdt().queryProcess(node.getOwnIndex()) == 0) {
             logger.info("Out of resources. Cannot decrement counter.");
 
             // Notify client about unsuccessful decrement
@@ -655,7 +773,7 @@ public class MessageProcessor extends Thread {
 
     /**
      * Request leases.
-     * As a follower sendd <REQL> to leader.
+     * As a follower send <REQL> to leader.
      * As a leader send <REQS> to all nodes.
      */
     private void requestLeases() {
@@ -675,6 +793,7 @@ public class MessageProcessor extends Thread {
             persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             // Send Request State to all other nodes
+            logger.info("Leader ran out of resources. Starting coordination phase.");
             String message = MessageType.REQS.getTitle() + ":" + node.getRoundNumber();
             messageHandler.broadcast(message);
         } else {
@@ -689,16 +808,58 @@ public class MessageProcessor extends Thread {
         this.statesReceivedFrom = statesReceivedFrom;
     }
 
+    // --------------------------------------------------------------------------------------
+    // ----------------- HEARTBEAT/LEADER ELECTION MESSAGE HANDLING -------------------------
+    // --------------------------------------------------------------------------------------
+
+    private void handleElectionRequest(Message message) {
+        node.leaderElectionInProcess = true;
+        node.ballotLeaderElection.rnd = Integer.parseInt(message.getContent());
+        ElectionReplyMessage electionReplyMessage = new ElectionReplyMessage(node.ballotLeaderElection.rnd, node.ballotNumber, node.isQuorumConnected());
+        String outMessage = MessageType.ELECTION_REPLY.getTitle() + ":" + electionReplyMessage.toString();
+        node.messageHandler.send(outMessage, message.getPort());
+    }
+
+    private void handleElectionResult(String message) {
+        String[] parts = message.split(",");
+        int id = Integer.parseInt(parts[0]);
+        int ballotNumber = Integer.parseInt(parts[1]);
+        boolean wasLeader = node.isLeader();
+        this.node.setLeaderPort(id);
+        this.node.leaderBallotNumber = ballotNumber;
+        if (!wasLeader && node.isLeader()) {
+            logger.info("I'm the new leader");
+            startPreparePhase();
+        } else if (!node.isLeader()) {
+            logger.info("LeaderElection: I hereby accept " + id + " as my leader");
+        }
+        node.leaderElectionInProcess = false;
+    }
+
+    // --------------------------------------------------------------------------------------
+    // --------------------------------- HELPERS --------------------------------------------
+    // --------------------------------------------------------------------------------------
+
+    /**
+     * Method used to simulate delays in message sending.
+     * @param function Function that is triggered after the delay. It is used to send the message.
+     */
+    private void delaysMessageSent(Function function) {
+        int delayInSeconds = 5;
+        WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(delayInSeconds * 1000, function);
+        messageWaitTimeTrigger.start();
+    }
 
     /**
      * Thread that waits for remaining time and then triggers the function.
      */
-    private class MessageWaitTimeTrigger extends Thread {
+    private class WaitTimeTrigger extends Thread {
+
 
         long timeToWait;
         Function function;
 
-        public MessageWaitTimeTrigger(long timeToWait, Function function) {
+        public WaitTimeTrigger(long timeToWait, Function function) {
             this.timeToWait = timeToWait;
             this.function = function;
         }
@@ -714,35 +875,5 @@ public class MessageProcessor extends Thread {
             logger.debug("Triggering function after waiting for remaining time.");
             function.apply();
         }
-    }
-
-    // --------------------------------------------------------------------------------------
-    // ----------------- HEARTBEAT/LEADER ELECTION MESSAGE HANDLING -------------------------
-    // --------------------------------------------------------------------------------------
-
-
-    private void handleElectionRequest(Message message) {
-        node.leaderElectionInProcess = true;
-        node.ballotLeaderElection.rnd= Integer.parseInt(message.getContent());
-        ElectionReplyMessage electionReplyMessage = new ElectionReplyMessage(node.ballotLeaderElection.rnd, node.ballotNumber, node.isQuorumConnected());
-        String outMessage = MessageType.ELECTIONREPLY.getTitle() + ":" + electionReplyMessage.toString();
-        node.messageHandler.send(outMessage, message.getPort());
-    }
-    private void handleElectionResult(String message) {
-        String[] parts = message.split(",");
-        int id = Integer.parseInt(parts[0]);
-        int ballotNumber = Integer.parseInt(parts[1]);
-        boolean wasLeader = node.isLeader();
-        this.node.setLeaderPort(id);
-        this.node.leaderBallotNumber = ballotNumber;
-        if(!wasLeader && node.isLeader()){
-            logger.info("I'm the new leader");
-            node.iAmNewLeader();
-        } else if (!node.isLeader()) {
-            logger.info("LeaderElection: I hereby accept " + id + " as my leader");
-        }
-        node.leaderElectionInProcess = false;
-
-
     }
 }

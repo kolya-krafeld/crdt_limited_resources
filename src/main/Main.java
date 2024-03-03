@@ -35,7 +35,8 @@ public class Main {
         }
 
         // Delay coordination messages from this node
-        nodes.get(nodes.size() - 1).setAddMessageDelay(true);
+        //nodes.get(1).setAddMessageDelay(true);
+        //nodes.get(2).setAddMessageDelay(true);
 
         Client client = new Client(ports, nodes);
         client.init();
@@ -80,7 +81,7 @@ public class Main {
             ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
             //executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
             executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
-            //executor.scheduleAtFixedRate(nodeKiller, 6, 30, TimeUnit.SECONDS);
+            executor.scheduleAtFixedRate(nodeKiller, 6, 30, TimeUnit.SECONDS);
 
 
             try {
@@ -117,19 +118,16 @@ public class Main {
         }
 
         /**
-         * Kills random follower node at specific interval.
+         * Kills random node at specific interval.
          */
         class NodeKiller extends Thread {
 
             public void run() {
                 // Get random number between 1 and nodes.size()
                 //int random = (int) (Math.random() * (nodes.size() - 1)) +1;
-                int random = 1;
+                int random = 0;
 
                 Node node = nodes.get(random);
-                if (node.isLeader()) {
-                    return;
-                }
                 System.out.println("Killing node: " + node.getOwnPort());
                 node.kill();
 

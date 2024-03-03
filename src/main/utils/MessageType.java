@@ -2,15 +2,15 @@ package main.utils;
 
 public enum MessageType {
 
-    // Peer-to-peer messages
-    HBRequest("heartbeat-request", false),
-    HBReply("heartbeat-reply", false),
-    ELECTIONREQUEST("election-request", false),
-    ELECTIONREPLY("election-reply", false),
-    ELECTIONRESULT("election-result", false),
-    MERGE("merge", false),
+    // Ballot Leader Election messages
+    HB_REQUEST("heartbeat-request", false, true),
+    HB_REPLY("heartbeat-reply", false, true),
+    ELECTION_REQUEST("election-request", false, true),
+    ELECTION_REPLY("election-reply", false, true),
+    ELECTION_RESULT("election-result", false, true),
 
-    // Coordination messages
+
+    // Coordination messages,
     REQL("request-lease", true),
     REQS("request-state", true),
     STATE("state", true),
@@ -22,6 +22,13 @@ public enum MessageType {
     REQUEST_SYNC("request-sync", true),
     ACCEPT_SYNC("accept-sync", true),
 
+    // Leader Prepare phase
+    PREPARE("prepare", true),
+    PROMISE("promise", false, false, true),
+
+    // CRDT Merge
+    MERGE("merge", false),
+
     // Client messages
     INC("increment", false),
     DEC("decrement", false),
@@ -31,11 +38,23 @@ public enum MessageType {
 
     private final String title;
     private final boolean coordinationMessage;
-
+    private final boolean leaderElectionMessage;
+    private final boolean preparePhaseMessage;
 
     MessageType(String title, boolean coordinationMessage) {
+        this(title, coordinationMessage, false);
+    }
+
+
+    MessageType(String title, boolean coordinationMessage, boolean leaderElectionMessage) {
+        this(title, coordinationMessage, leaderElectionMessage, false);
+    }
+
+    MessageType(String title, boolean coordinationMessage, boolean leaderElectionMessage, boolean preparePhaseMessage) {
         this.title = title;
         this.coordinationMessage = coordinationMessage;
+        this.leaderElectionMessage = leaderElectionMessage;
+        this.preparePhaseMessage = preparePhaseMessage;
     }
 
     public static MessageType titleToMessageType(String title) {
@@ -53,5 +72,13 @@ public enum MessageType {
 
     public boolean isCoordinationMessage() {
         return coordinationMessage;
+    }
+
+    public boolean isLeaderElectionMessage() {
+        return leaderElectionMessage;
+    }
+
+    public boolean isPreparePhaseMessage() {
+        return preparePhaseMessage;
     }
 }

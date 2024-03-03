@@ -38,4 +38,14 @@ public class Message {
     public String getContent() {
         return content;
     }
+
+    @Override
+    public String toString() {
+        return "Message{" +
+                "address=" + address +
+                ", port=" + port +
+                ", type=" + type +
+                ", content='" + content + '\'' +
+                '}';
+    }
 }

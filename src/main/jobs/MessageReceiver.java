@@ -50,11 +50,12 @@ public class MessageReceiver extends Thread {
 
                 // Add message to the correct queue for processing
                 MessageType mT = message.getType();
-                if(mT == MessageType.HBRequest || mT == MessageType.HBReply || mT==MessageType.ELECTIONREQUEST || mT == MessageType.ELECTIONREPLY || mT == MessageType.ELECTIONRESULT) {
+                if(message.getType().isLeaderElectionMessage()) {
                     node.heartbeatAndElectionMessageQueue.add(message);
-                }
-                else if (message.getType().isCoordinationMessage()) {
-                    node.coordiantionMessageQueue.add(message);
+                } else if (message.getType().isPreparePhaseMessage()) {
+                    node.preparePhaseMessageQueue.add(message);
+                } else if (message.getType().isCoordinationMessage()) {
+                    node.coordinationMessageQueue.add(message);
                 } else {
                     if (message == null) {
                         logger.error("Message is null");

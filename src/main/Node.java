@@ -1,6 +1,5 @@
 package main;
 
-import com.sun.net.httpserver.Authenticator;
 import main.ballot_leader_election.BallotLeaderElection;
 import main.crdt.LimitedResourceCrdt;
 import main.jobs.CrdtMerger;
@@ -12,8 +11,6 @@ import main.failure_detector.FailureDetector;
 import main.utils.Message;
 import main.utils.LogicalClock;
 import main.utils.MessageType;
-
-import javax.swing.text.html.Option;
 
 import java.net.DatagramSocket;
 import java.util.List;
@@ -55,10 +52,18 @@ public class Node {
     boolean inRestartPhase = false;
 
     /**
+     * Flag to indicate that a new leader is in prepare phase.
+     */
+    boolean inPreparePhase = false;
+
+    /**
      * Is set when we have less resources than processes, so every lease needs a coordination phase.
      */
     boolean finalResources = false;
 
+    /**
+     * Is set when our node and the leader node are out of resources. This is used to deny resources to clients directly.
+     */
     boolean outOfResources = false;
 
     /**
@@ -69,9 +74,16 @@ public class Node {
     /**
      * Queue of messages to be processed. Using concurrent queue to make it thread safe.
      */
-    public Queue<Message> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
+    public Queue<Message> coordinationMessageQueue = new ConcurrentLinkedQueue<>();
+
     /**
-     * Queue of messages with topics heartbeat and leader election to be processed. This Queue has the highest priority. Using concurrent queue to make it thread safe.
+     * Queue of messages prepare phase messages to be processed. Used only by a new leader that was freshly elected.
+     */
+    public Queue<Message> preparePhaseMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages with topics heartbeat and leader election to be processed. This Queue has the highest priority.
+     * Using concurrent queue to make it thread safe.
      */
     public Queue<Message> heartbeatAndElectionMessageQueue = new ConcurrentLinkedQueue<>();
 
@@ -96,6 +108,10 @@ public class Node {
      * Size of a quorum with the current amount of nodes.
      */
     private int quorumSize;
+
+    /**
+     * Flag to indicate if the node is connected to a majority of nodes.
+     */
     private boolean isQuorumConnected = true;
 
     /**
@@ -235,16 +251,12 @@ public class Node {
         while (inRestartPhase) {
             messageHandler.broadcast(MessageType.REQUEST_SYNC.getTitle() + ":" + roundNumber);
             try {
-                Thread.sleep(1000);
+                Thread.sleep(2000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         }
         failureDetector.start();
-    }
-
-    public void iAmNewLeader(){
-        //TODO Kolya
     }
 
     public synchronized int getTime() {
@@ -377,5 +389,13 @@ public class Node {
 
     public boolean isAddMessageDelay() {
         return addMessageDelay;
+    }
+
+    public boolean isInPreparePhase() {
+        return inPreparePhase;
+    }
+
+    public void setInPreparePhase(boolean inPreparePhase) {
+        this.inPreparePhase = inPreparePhase;
     }
 }
