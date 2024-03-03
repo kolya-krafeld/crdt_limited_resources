@@ -48,11 +48,10 @@ public class MessageReceiver extends Thread {
                 }
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
-                // Add message to correct queue, Heartbeats get handled immediately
-                if(message.getType() == MessageType.HEARTBEAT_PING) {
-                    node.failureDetector.sendHeartbeatPong(message.getPort());
-                } else if (message.getType() == MessageType.HEARTBEAT_PONG) {
-                    node.failureDetector.updateNodeStatus(message.getPort());
+                // Add message to the correct queue for processing
+                MessageType mT = message.getType();
+                if(mT == MessageType.HBRequest || mT == MessageType.HBReply || mT==MessageType.ELECTIONREQUEST || mT == MessageType.ELECTIONREPLY || mT == MessageType.ELECTIONRESULT) {
+                    node.heartbeatAndElectionMessageQueue.add(message);
                 }
                 else if (message.getType().isCoordinationMessage()) {
                     node.coordiantionMessageQueue.add(message);

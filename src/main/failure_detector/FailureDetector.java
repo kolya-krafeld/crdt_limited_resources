@@ -7,13 +7,15 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 import main.Config;
+import main.utils.Logger;
 import main.utils.MessageHandler;
 import main.utils.LogicalClock;
 import main.utils.MessageType;
 import main.Node;
 
-public class FailureDetector {
+public class FailureDetector extends Thread {
     private final int nodePort;
+    private final Logger logger;
     private final List<Integer> allNodes;
     private Node node;
     private List<Integer> suspectedNodes;
@@ -26,12 +28,12 @@ public class FailureDetector {
     private ScheduledFuture<?> heartbeatTask;
     private ScheduledExecutorService checkExecutor;
     private ScheduledFuture<?> checkTask;
-    private final int sendHeartbeatInterval;
-    private final int heartbeatTimeout;
+    private final long heartbeatTimeout;
     private final int tickLength;
 
     public FailureDetector(Node node, int nodePort, List<Integer> allNodes, Config config) {
         this.node = node;
+        this.logger = node.logger;
         this.nodePort = nodePort;
         this.allNodes = allNodes;
         this.suspectedNodes = new ArrayList<>(allNodes);
@@ -40,21 +42,32 @@ public class FailureDetector {
         this.gotHeartbeatPongAtTime = new HashMap<>();
         this.heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
         this.checkExecutor = Executors.newSingleThreadScheduledExecutor();
-        this.sendHeartbeatInterval = config.sendHeartbeatInterval();
         this.heartbeatTimeout = config.heartbeatTimeout();
-        this.tickLength = config.tick();
+        this.tickLength = config.tickLength();
 
     }
 
 
-    public void start() {
-        heartbeatTask = this.heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeatPing, 0, this.sendHeartbeatInterval * tickLength, TimeUnit.MILLISECONDS);
-        checkTask = this.checkExecutor.scheduleAtFixedRate(this::checkHeartbeats, 0, this.heartbeatTimeout * tickLength, TimeUnit.MILLISECONDS);
+    public void run() {
+        try {
+            while (true) {
+                sendHeartbeatRequest();
+                if (node.getTime() % this.heartbeatTimeout == 0) {
+                    checkHeartbeats();
+                }
+                Thread.sleep(tickLength);
+            }
+
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+
+        }
     }
 
-    private void sendHeartbeatPing() {
+    private void sendHeartbeatRequest() {
         for (int receiverNode : this.allNodes) {
-            String message = MessageType.HEARTBEAT_PING.getTitle() + ":" + this.nodePort;
+            HeartbeatMessage heartBeatMessage = new HeartbeatMessage(this.node.isQuorumConnected(), node.ballotNumber);
+            String message = MessageType.HBRequest.getTitle() + ":" + heartBeatMessage.toString();
             node.messageHandler.send(message, receiverNode);
             sendHeartbeatPingAtTime.put(receiverNode, node.getTime());
         }
@@ -74,21 +87,40 @@ public class FailureDetector {
         }
         this.suspectedNodes = toBeSuspected;
         this.unsuspectedNodes = toBeUnsuspected;
+        if (this.unsuspectedNodes.size() >= this.node.getQuorumSize()) {
+            this.node.setQuorumConnected(true);
+        } else {
+            logger.warn("Not connected to quorum");
+            this.node.setQuorumConnected(false);
+        }
+        if (this.suspectedNodes.contains(this.node.getLeaderPort()) && !node.leaderElectionInProcess) {
+            logger.warn("Leader is suspected to be dead, starting leader election");
+            this.node.startLeaderElection();
+        }
+        if(this.node.getLeaderPort()==-1 && !node.leaderElectionInProcess){
+            logger.warn("Leader is set to -1, starting leader election");
+            this.node.startLeaderElection();
+        }
+
     }
 
-    public void updateNodeStatus(int node) {
+    public void updateNodeStatus(int node, HeartbeatMessage message) {
+        if (this.node.getLeaderPort() == node && !message.isQourumConnected && !this.node.leaderElectionInProcess) {
+            logger.warn("Leader is not connected to quorum anymore, starting leader election");
+            this.node.startLeaderElection();
+        }
         this.gotHeartbeatPongAtTime.put(node, this.node.getTime());
     }
 
+    //only for test purposes
     public synchronized int numberOfConnectedNodes() {
         return this.unsuspectedNodes.size();
     }
 
-    public synchronized boolean isConnectedToQuorum() {
-        return this.unsuspectedNodes.size() > this.suspectedNodes.size();
-    }
-
-    public void sendHeartbeatPong(int port) {
-        node.messageHandler.send(MessageType.HEARTBEAT_PONG.getTitle(), port);
+    public void sendHeartbeatReply(int port) {
+        HeartbeatMessage message = new HeartbeatMessage(node.isQuorumConnected(), node.ballotNumber);
+        String messageStr = MessageType.HBReply.getTitle() + ":" + message.toString();
+        node.messageHandler.send(messageStr, port);
     }
 }
+

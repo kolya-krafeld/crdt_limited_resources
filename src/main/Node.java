@@ -1,6 +1,7 @@
 package main;
 
 import com.sun.net.httpserver.Authenticator;
+import main.ballot_leader_election.BallotLeaderElection;
 import main.crdt.LimitedResourceCrdt;
 import main.jobs.CrdtMerger;
 import main.jobs.MessageProcessor;
@@ -69,11 +70,18 @@ public class Node {
      * Queue of messages to be processed. Using concurrent queue to make it thread safe.
      */
     public Queue<Message> coordiantionMessageQueue = new ConcurrentLinkedQueue<>();
-
+    /**
+     * Queue of messages with topics heartbeat and leader election to be processed. This Queue has the highest priority. Using concurrent queue to make it thread safe.
+     */
+    public Queue<Message> heartbeatAndElectionMessageQueue = new ConcurrentLinkedQueue<>();
 
     private int ownPort;
 
     private int leaderPort = -1;
+    public int leaderBallotNumber = 0;
+    public int ballotNumber = 0;
+    public boolean leaderElectionInProcess=false;
+    public int nodeCoordinatingCurrentLeaderElection = -1;
 
     /**
      * Index of the node in the network.
@@ -88,6 +96,7 @@ public class Node {
      * Size of a quorum with the current amount of nodes.
      */
     private int quorumSize;
+    private boolean isQuorumConnected = true;
 
     /**
      * CRDT that only allows access to limited ressources.
@@ -124,6 +133,7 @@ public class Node {
     private ScheduledExecutorService clockExecutor;
     public FailureDetector failureDetector;
     public LogicalClock logicalClock;
+    public BallotLeaderElection ballotLeaderElection;
 
     public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
@@ -137,6 +147,7 @@ public class Node {
         this.logicalClock = new LogicalClock();
         this.clockExecutor = Executors.newSingleThreadScheduledExecutor();
         this.failureDetector = new FailureDetector(this, this.ownPort, nodesPorts, config);
+        this.ballotLeaderElection = new BallotLeaderElection(this, config.electionTimeout());
 
         // Get own index in port list
         int ownIndex = nodesPorts.indexOf(port);
@@ -158,14 +169,15 @@ public class Node {
     /**
      * Starts the node.
      */
-    public void init() {
+    public void init(boolean startFailureDetector) {
         // Persist state at beginning
-        persister.persistState(false, 0, crdt, Optional.empty());
+        persister.persistState(false, 0, crdt, Optional.empty(), this.leaderBallotNumber);
 
         ScheduledExecutorService clockExecutor = Executors.newScheduledThreadPool(1);
-        clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tick(), TimeUnit.MILLISECONDS);
-        failureDetector.start();
-
+        clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tickLength(), TimeUnit.MILLISECONDS);
+        if (startFailureDetector) {
+            failureDetector.start();
+        }
 
         messageReceiver = new MessageReceiver(this);
         messageReceiver.start();
@@ -185,6 +197,7 @@ public class Node {
     public void kill() {
         logger.warn("Killed!");
 
+        failureDetector.interrupt();
         messageReceiver.interrupt();
         messageReceiver.stopReceiver();
         messageProcessor.interrupt();
@@ -213,8 +226,8 @@ public class Node {
             throw new RuntimeException(e);
         }
 
-        // Start all jobs again
-        init();
+        // Start all jobs again, except failure detector
+        init(false);
 
         // Send message to all nodes that we are back. Only the leader will respond.
         // Either with a <decide> if we are still in the same coordination phase as before or with <accept-sync> otherwise.
@@ -227,10 +240,20 @@ public class Node {
                 throw new RuntimeException(e);
             }
         }
+        failureDetector.start();
+    }
+
+    public void iAmNewLeader(){
+        //TODO Kolya
     }
 
     public synchronized int getTime() {
         return this.logicalClock.getTime();
+    }
+
+    public void startLeaderElection() {
+        //maybe we have to set inCoordinationPhase = true, but as leaderElection happens on another layer, it should work
+        this.ballotLeaderElection.start();
     }
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
@@ -293,6 +316,14 @@ public class Node {
 
     public boolean isFinalResources() {
         return finalResources;
+    }
+
+    public boolean isQuorumConnected() {
+        return this.isQuorumConnected;
+    }
+
+    public void setQuorumConnected(boolean quorumConnected) {
+        this.isQuorumConnected = quorumConnected;
     }
 
     public int getOwnPort() {

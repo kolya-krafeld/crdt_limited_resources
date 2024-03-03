@@ -57,17 +57,17 @@ public class MessageHandler {
      * Broadcast messages to all nodes in the network.
      */
     public void broadcast(String message) {
-        broadcastWithIgnore(message, node.getNodesPorts(), emptyList());
+        broadcastWithIgnore(message, node.getNodesPorts(), emptyList(), false);
     }
 
     /**
      * Send a message to all nodes in the network except for the ones in the list and yourself.
      */
-    public void broadcastWithIgnore(String message, List<Integer> nodesPorts, List<Integer> ignorePorts) {
+    public void broadcastWithIgnore(String message, List<Integer> nodesPorts, List<Integer> ignorePorts, boolean sendToYourself) {
         byte[] buf = message.getBytes();
         DatagramPacket sendPacket;
         for (int port : nodesPorts) {
-            if (port != ownPort && !ignorePorts.contains(port)) { // No need to broadcast to yourself and to the nodes in the ignore list
+            if (sendToYourself || (port != ownPort && !ignorePorts.contains(port))) { // No need to broadcast to yourself and to the nodes in the ignore list
                 try {
                     sendPacket = new DatagramPacket(buf, buf.length, ip, port);
                     socket.send(sendPacket);
@@ -76,6 +76,10 @@ public class MessageHandler {
                 }
             }
         }
+    }
+
+    public void broadcastIncludingSelf(String message) {
+        broadcastWithIgnore(message, node.getNodesPorts(), emptyList(), true);
     }
 
     public void setSocket(DatagramSocket socket) {

@@ -17,7 +17,7 @@ class MessageProcessorTest {
 
     @Test
     void testReassignLeaseBaseCase() throws SocketException, UnknownHostException {
-        Config config = new Config(100,5, 2);
+        Config config = new Config(100,5, 2, 5);
         Node node = new Node(8080, asList(8080, 8082, 8083), config);
         MessageHandler messageHandler = new MessageHandler(node, new DatagramSocket(), 8080);
 

@@ -1,8 +1,10 @@
 package main.jobs;
 
-import main.utils.*;
 import main.Node;
+import main.ballot_leader_election.ElectionReplyMessage;
 import main.crdt.LimitedResourceCrdt;
+import main.failure_detector.HeartbeatMessage;
+import main.utils.*;
 
 import java.util.*;
 
@@ -78,6 +80,9 @@ public class MessageProcessor extends Thread {
      */
     public void run() {
         while (true) {
+            if (!node.heartbeatAndElectionMessageQueue.isEmpty()) {
+                matchHeartbeatAndElectionMessage(node.heartbeatAndElectionMessageQueue.poll());
+            }
             if (!node.coordiantionMessageQueue.isEmpty()) {
                 matchCoordinationMessage(node.coordiantionMessageQueue.poll());
 
@@ -149,6 +154,30 @@ public class MessageProcessor extends Thread {
         }
     }
 
+    void matchHeartbeatAndElectionMessage(Message message) {
+        switch (message.getType()) {
+            case HBRequest:
+                node.failureDetector.sendHeartbeatReply(message.getPort());
+                break;
+            case HBReply:
+                node.failureDetector.updateNodeStatus(message.getPort(), HeartbeatMessage.fromString(message.getContent()));
+                break;
+            case ELECTIONREQUEST:
+                handleElectionRequest(message);
+                break;
+            case ELECTIONREPLY:
+                node.ballotLeaderElection.handleElectionReply(message);
+                break;
+            case ELECTIONRESULT:
+                handleElectionResult(message.getContent());
+                break;
+            default:
+                logger.info("Unknown message from :"+message.getPort()+" : Type: " + message.getType() + " Content: " + message.getContent());
+        }
+    }
+
+
+
 
     // --------------------------------------------------------------------------------------
     // ----------------- COORDINATION MESSAGE HANDLING --------------------------------------
@@ -186,7 +215,7 @@ public class MessageProcessor extends Thread {
             node.setLastDecideRoundNumber(leaderRoundNumber);
 
             // Persist newly loaded state
-            persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty());
+            persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             node.setLeaderPort(message.getPort());
             node.setInRestartPhase(false);
@@ -206,7 +235,7 @@ public class MessageProcessor extends Thread {
                 // Increase round number
                 node.setRoundNumber(node.getRoundNumber() + 1);
 
-                persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty());
+                persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
                 node.setInCoordinationPhase(true);
                 leaderMergedCrdt = node.getCrdt(); // set leader crdt first
                 leaseRequestFrom.clear();
@@ -217,7 +246,7 @@ public class MessageProcessor extends Thread {
                 // Send Request State to all other nodes
                 this.lastRequestStateSent = System.currentTimeMillis();
                 String messageStr = MessageType.REQS.getTitle() + ":" + node.getRoundNumber();
-                messageHandler.broadcastWithIgnore(messageStr, node.getNodesPorts(), leaseRequestFrom);
+                messageHandler.broadcastWithIgnore(messageStr, node.getNodesPorts(), leaseRequestFrom, false);
             } else {
                 // We are already in coordination phase.
                 leaseRequestFrom.add(message.getPort());
@@ -240,7 +269,7 @@ public class MessageProcessor extends Thread {
             int roundNumber = Integer.parseInt(message.getContent());
             node.setRoundNumber(roundNumber);
 
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty());
+            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
             node.setInCoordinationPhase(true);
 
             // Delay message send
@@ -268,7 +297,7 @@ public class MessageProcessor extends Thread {
     /**
      * Leader receives state message from follower.
      * 1. Merge state with leaders-merged-crdt
-     *
+     * <p>
      * If we have received state from quorum:
      * 1. Reassign leases
      * 2. Propose state to all nodes
@@ -361,7 +390,7 @@ public class MessageProcessor extends Thread {
             node.setAcceptedCrdt(new LimitedResourceCrdt(crdtString));
 
             // Persist state before sending ACCEPTED to leader
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt());
+            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
             // Delay message send
             delaysMessageSent();
@@ -401,7 +430,7 @@ public class MessageProcessor extends Thread {
                 node.setLastDecideRoundNumber(node.getRoundNumber());
 
                 // Persist state before sending DECIDE to all nodes
-                persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty());
+                persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
                 String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(outMessage);
@@ -446,7 +475,7 @@ public class MessageProcessor extends Thread {
 
         node.getCrdt().merge(mergingCrdt);
         // Persist state after merging
-        persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty());
+        persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
         if (node.isInRestartPhase()) {
             node.setLeaderPort(message.getPort()); // If we were in restart phase we need to update leader port
@@ -476,14 +505,14 @@ public class MessageProcessor extends Thread {
     /**
      * Reassigns leases to all nodes that we got a state message from.
      * We can only take leases from nodes that we have received a state from.
-     *
+     * <p>
      * BASE CASE: We have more available resources than nodes that we got a state from.
      * We can assign the resources to the nodes directly.
-     *
+     * <p>
      * CASE (less resources than nodes): We need to coordinate for every lease.
      * We assign the remaining leases to the leader now and the followers need to send a new <REQL> for each new lease
      * that they need.
-     *
+     * <p>
      * E.g. 12 resources left -> 4 resources per node
      * <10, 10, 10> -> <14, 14, 14>
      * <10, 8,  0>     <10, 10, 10>
@@ -596,7 +625,7 @@ public class MessageProcessor extends Thread {
 
             node.getCrdt().decrement(node.getOwnIndex());
             // Persist state before sending APPROVE to client
-            persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt());
+            persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
             // Notify client about successful decrement
             messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
@@ -609,7 +638,7 @@ public class MessageProcessor extends Thread {
                 // todo send request for lease
             } else {
                 // Persist state before sending APPROVE to client
-                persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt());
+                persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
                 // Notify client about successful decrement
                 messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
@@ -643,13 +672,13 @@ public class MessageProcessor extends Thread {
             // Increase round number & persist state again
             node.setRoundNumber(node.getRoundNumber() + 1);
 
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty());
+            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             // Send Request State to all other nodes
             String message = MessageType.REQS.getTitle() + ":" + node.getRoundNumber();
             messageHandler.broadcast(message);
         } else {
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty());
+            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             String outMessage = MessageType.REQL.getTitle() + ":" + node.getCrdt().toString();
             messageHandler.sendToLeader(outMessage);
@@ -685,5 +714,35 @@ public class MessageProcessor extends Thread {
             logger.debug("Triggering function after waiting for remaining time.");
             function.apply();
         }
+    }
+
+    // --------------------------------------------------------------------------------------
+    // ----------------- HEARTBEAT/LEADER ELECTION MESSAGE HANDLING -------------------------
+    // --------------------------------------------------------------------------------------
+
+
+    private void handleElectionRequest(Message message) {
+        node.leaderElectionInProcess = true;
+        node.ballotLeaderElection.rnd= Integer.parseInt(message.getContent());
+        ElectionReplyMessage electionReplyMessage = new ElectionReplyMessage(node.ballotLeaderElection.rnd, node.ballotNumber, node.isQuorumConnected());
+        String outMessage = MessageType.ELECTIONREPLY.getTitle() + ":" + electionReplyMessage.toString();
+        node.messageHandler.send(outMessage, message.getPort());
+    }
+    private void handleElectionResult(String message) {
+        String[] parts = message.split(",");
+        int id = Integer.parseInt(parts[0]);
+        int ballotNumber = Integer.parseInt(parts[1]);
+        boolean wasLeader = node.isLeader();
+        this.node.setLeaderPort(id);
+        this.node.leaderBallotNumber = ballotNumber;
+        if(!wasLeader && node.isLeader()){
+            logger.info("I'm the new leader");
+            node.iAmNewLeader();
+        } else if (!node.isLeader()) {
+            logger.info("LeaderElection: I hereby accept " + id + " as my leader");
+        }
+        node.leaderElectionInProcess = false;
+
+
     }
 }

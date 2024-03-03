@@ -3,8 +3,11 @@ package main.utils;
 public enum MessageType {
 
     // Peer-to-peer messages
-    HEARTBEAT_PING("heartbeat_ping", false),
-    HEARTBEAT_PONG("heartbeat_pong", false),
+    HBRequest("heartbeat-request", false),
+    HBReply("heartbeat-reply", false),
+    ELECTIONREQUEST("election-request", false),
+    ELECTIONREPLY("election-reply", false),
+    ELECTIONRESULT("election-result", false),
     MERGE("merge", false),
 
     // Coordination messages

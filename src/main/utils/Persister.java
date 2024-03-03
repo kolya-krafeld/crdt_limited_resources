@@ -22,15 +22,21 @@ public class Persister {
     /**
      * Persists current state of the node to a local file.
      */
-    public void persistState(boolean inCoordinationPhase, int roundNumber, LimitedResourceCrdt state, Optional<LimitedResourceCrdt> acceptedState) {
+    public void persistState(boolean inCoordinationPhase, int roundNumber, LimitedResourceCrdt state, Optional<LimitedResourceCrdt> acceptedState, int leaderBallotNumber) {
         String output = "inCoordinationPhase:" + inCoordinationPhase + "\n";
         output += "roundNumber:" + roundNumber + "\n";
-        output += "state:" + state.toString();
+        output += "state:" + state.toString()+ "\n";
+        output += "leaderBallotNumber:" + leaderBallotNumber;
         if (acceptedState.isPresent()) {
             output += "\nacceptedState:" + acceptedState.get().toString();
         }
 
         try {
+            File statesFolder = new File("states");
+            if (!statesFolder.exists()) {
+                statesFolder.mkdir();
+            }
+
             FileOutputStream outputStream = new FileOutputStream(String.format(FILEPATH, node.getOwnPort()));
             byte[] strToBytes = output.getBytes();
             outputStream.write(strToBytes);
@@ -66,7 +72,7 @@ public class Persister {
 
     public void setLoadedState(String line) {
         String[] keyValue = line.split(":");
-        switch(keyValue[0]) {
+        switch (keyValue[0]) {
             case "inCoordinationPhase":
                 node.setInCoordinationPhase(Boolean.parseBoolean(keyValue[1]));
                 break;
@@ -78,6 +84,9 @@ public class Persister {
                 break;
             case "acceptedState":
                 node.setAcceptedCrdt(new LimitedResourceCrdt(keyValue[1]));
+                break;
+            case "leaderBallotNumber":
+                node.leaderBallotNumber = (Integer.parseInt(keyValue[1]));
                 break;
         }
     }
