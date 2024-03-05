@@ -30,7 +30,7 @@ public class Logger {
 
     public void info(String message) {
         if (logLevel.ordinal() <= LogLevel.INFO.ordinal()) {
-            System.out.println("INFO: " + getNodeInfo() + message);
+            System.out.println("INFO:  " + getNodeInfo() + message);
         }
     }
 
@@ -42,7 +42,7 @@ public class Logger {
 
     public void warn(String message) {
         if (logLevel.ordinal() <= LogLevel.WARN.ordinal()) {
-            System.out.println("WARN: " + getNodeInfo() + message);
+            System.out.println("WARN:  " + getNodeInfo() + message);
         }
     }
 

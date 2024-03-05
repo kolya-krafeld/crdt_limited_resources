@@ -27,7 +27,6 @@ public class MessageReceiver extends Thread {
     }
 
 
-
     public void run() {
         byte[] receive;
         DatagramPacket receivePacket;
@@ -49,8 +48,9 @@ public class MessageReceiver extends Thread {
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                 // Add message to the correct queue for processing
-                MessageType mT = message.getType();
-                if(message.getType().isLeaderElectionMessage()) {
+                if (message.getType().isFindLeaderMessage()) {
+                    node.findLeaderMessageQueue.add(message);
+                } else if (message.getType().heartbeatOrLeaderElectionMessage()) {
                     node.heartbeatAndElectionMessageQueue.add(message);
                 } else if (message.getType().isPreparePhaseMessage()) {
                     node.preparePhaseMessageQueue.add(message);

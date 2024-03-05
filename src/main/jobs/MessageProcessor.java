@@ -78,23 +78,36 @@ public class MessageProcessor extends Thread {
 
 
     /**
-     * Processes messages from the coordination and operation message queues.
-     * Prioritize coordination messages.
-     * Don't process operation messages if we are in the coordination phase.
+     * Processes messages from the leader election, heartbeats coordination and operation message queues.
+     * The priority of the queues is as follows:
+     * findLeaderMessageQueue > heartbeatAndElectionMessageQueue > preparePhaseMessageQueue > coordinationMessageQueue > operationMessageQueue
+     * If a node doesn't know the current leader only findLeader messages and heartbeat and election messages are handled.
+     * A node doesn't know the current leader because for one or more of the following reasons:
+     * no leader was elected yet
+     * the leader has failed and an election is in process
+     * the leader is not connecting to a quorum anymore
+     * the node missed the last election
+     *
      */
+    //TODO: nachrichten an leadre weiterleiten falls diese nicht leader ist
     public void run() {
         while (true) {
+            if (!node.findLeaderMessageQueue.isEmpty()) {
+                matchFindLeaderMessage(node.findLeaderMessageQueue.poll());
+            }
             if (!node.heartbeatAndElectionMessageQueue.isEmpty()) {
                 matchHeartbeatAndElectionMessage(node.heartbeatAndElectionMessageQueue.poll());
             }
-            if (!node.preparePhaseMessageQueue.isEmpty() && node.isLeader() && node.isInPreparePhase()) {
-                matchPreparePhaseMessage(node.preparePhaseMessageQueue.poll());
-            }
-            if (!node.coordinationMessageQueue.isEmpty()) {
-                matchCoordinationMessage(node.coordinationMessageQueue.poll());
-            } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase()) {
-                // Only process operation messages if we are not in the coordination or restart phase
-                matchOperationMessage(node.operationMessageQueue.poll());
+            if(!(node.isSearchingForLeader|| node.leaderElectionInProcess)) {
+                if (!node.preparePhaseMessageQueue.isEmpty() && node.isLeader() && node.isInPreparePhase()) {
+                    matchPreparePhaseMessage(node.preparePhaseMessageQueue.poll());
+                }
+                if (!node.coordinationMessageQueue.isEmpty()) {
+                    matchCoordinationMessage(node.coordinationMessageQueue.poll());
+                } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase()) {
+                    // Only process operation messages if we are not in the coordination or restart phase
+                    matchOperationMessage(node.operationMessageQueue.poll());
+                }
             }
         }
     }
@@ -203,6 +216,22 @@ public class MessageProcessor extends Thread {
                 break;
             case ELECTION_RESULT:
                 handleElectionResult(message.getContent());
+                break;
+            default:
+                logger.info("Unknown message from :" + message.getPort() + " : Type: " + message.getType() + " Content: " + message.getContent());
+        }
+    }
+
+    /**
+     * Matches find leader messages to the appropriate method.
+     */
+    void matchFindLeaderMessage(Message message) {
+        switch (message.getType()) {
+            case FIND_LEADER_REQUEST:
+                replyToFindLeaderMessage(message.getPort());
+                break;
+            case FIND_LEADER_REPLY:
+                checkWhoIsLeader(message.getContent());
                 break;
             default:
                 logger.info("Unknown message from :" + message.getPort() + " : Type: " + message.getType() + " Content: " + message.getContent());
@@ -712,6 +741,7 @@ public class MessageProcessor extends Thread {
     // --------------------------------------------------------------------------------------
     // ----------------- OPERATION MESSAGE HANDLING --------------------------------------
     // --------------------------------------------------------------------------------------
+
     /**
      * Receive decrement message from client.
      */
@@ -837,11 +867,40 @@ public class MessageProcessor extends Thread {
     }
 
     // --------------------------------------------------------------------------------------
+    // ----------------- FIND LEADER MESSAGE HANDLING --------------------------------------
+    // --------------------------------------------------------------------------------------
+
+    /**
+     * Reply to a FIND_LEADER message with the leader's port and the leaders ballot number.
+     */
+    private void replyToFindLeaderMessage(int replyPort) {
+        String messageStr = MessageType.FIND_LEADER_REPLY.getTitle() + ":" + node.getLeaderPort() +","+ node.leaderBallotNumber;
+        node.messageHandler.send(messageStr, replyPort);
+    }
+
+    /**
+     * Puts the leader port, the time the same leader got confirmed and the leaders ballot number into the findLeaderAnswers map.
+     * This map is then checked by the FailureDetector if a leader got the majority.
+     */
+    private void checkWhoIsLeader (String messageContent){
+        String[] parts = messageContent.split(",");
+        int leaderPort = Integer.parseInt(parts[0]);
+        int leaderBallot = Integer.parseInt(parts[1]);
+        if(node.findLeaderAnswers.containsKey(leaderPort)){
+            node.findLeaderAnswers.put(leaderPort, new Integer[]{node.findLeaderAnswers.get(leaderPort)[0] + 1, leaderBallot});
+        } else {
+            node.findLeaderAnswers.put(leaderPort, new Integer[]{1, leaderBallot});
+        }
+    }
+
+
+    // --------------------------------------------------------------------------------------
     // --------------------------------- HELPERS --------------------------------------------
     // --------------------------------------------------------------------------------------
 
     /**
      * Method used to simulate delays in message sending.
+     *
      * @param function Function that is triggered after the delay. It is used to send the message.
      */
     private void delaysMessageSent(Function function) {

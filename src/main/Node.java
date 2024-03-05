@@ -13,9 +13,7 @@ import main.utils.LogicalClock;
 import main.utils.MessageType;
 
 import java.net.DatagramSocket;
-import java.util.List;
-import java.util.Optional;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.*;
 
 
@@ -67,6 +65,11 @@ public class Node {
     boolean outOfResources = false;
 
     /**
+     *Is set when node was leader and missed the election and itself is not the leader anymore.
+     */
+    public boolean isSearchingForLeader = false;
+
+    /**
      * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
      */
     public LinkedBlockingDeque<Message> operationMessageQueue = new LinkedBlockingDeque<>();
@@ -82,18 +85,31 @@ public class Node {
     public Queue<Message> preparePhaseMessageQueue = new ConcurrentLinkedQueue<>();
 
     /**
-     * Queue of messages with topics heartbeat and leader election to be processed. This Queue has the highest priority.
+     * Queue of messages with topics heartbeat and leader election to be processed.
      * Using concurrent queue to make it thread safe.
      */
     public Queue<Message> heartbeatAndElectionMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Queue of messages with topics find leader to be processed.
+     */
+    public Queue<Message> findLeaderMessageQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Stores the answers of the find leader messages in the form of <leader port, Integer[votes, leaderBallotNumber]>
+     * When the majority of the nodes have voted for a leader, the node knows again which node is the leader
+     */
+    public Map<Integer, Integer[]> findLeaderAnswers = new HashMap<>();
 
     private int ownPort;
 
     private int leaderPort = -1;
     public int leaderBallotNumber = 0;
+    /*
+    * Own ballot number of the node
+     */
     public int ballotNumber = 0;
     public boolean leaderElectionInProcess=false;
-    public int nodeCoordinatingCurrentLeaderElection = -1;
 
     /**
      * Index of the node in the network.
@@ -162,7 +178,7 @@ public class Node {
         this.config = config;
         this.logicalClock = new LogicalClock();
         this.clockExecutor = Executors.newSingleThreadScheduledExecutor();
-        this.failureDetector = new FailureDetector(this, this.ownPort, nodesPorts, config);
+        this.failureDetector = new FailureDetector(this, nodesPorts, config);
         this.ballotLeaderElection = new BallotLeaderElection(this, config.electionTimeout());
 
         // Get own index in port list

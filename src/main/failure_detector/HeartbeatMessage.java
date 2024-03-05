@@ -3,7 +3,6 @@ package main.failure_detector;
 public class HeartbeatMessage {
     public boolean isQourumConnected;
     public int ballotNumber;
-    public int time;
 
     public HeartbeatMessage(boolean isQourumConnected, int ballotNumber) {
         this.isQourumConnected = isQourumConnected;

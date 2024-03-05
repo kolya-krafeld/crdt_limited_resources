@@ -2,6 +2,10 @@ package main.utils;
 
 public enum MessageType {
 
+    //Find Leader messages
+    FIND_LEADER_REQUEST("find-leader-request", false, false, false, true),
+    FIND_LEADER_REPLY("find-leader-reply", false, false, false, true),
+
     // Ballot Leader Election messages
     HB_REQUEST("heartbeat-request", false, true),
     HB_REPLY("heartbeat-reply", false, true),
@@ -38,23 +42,30 @@ public enum MessageType {
 
     private final String title;
     private final boolean coordinationMessage;
-    private final boolean leaderElectionMessage;
+    private final boolean heartbeatOrLeaderElectionMessage;
     private final boolean preparePhaseMessage;
+    private final boolean findLeaderMessage;
 
     MessageType(String title, boolean coordinationMessage) {
-        this(title, coordinationMessage, false);
+        this(title, coordinationMessage, false, false);
     }
 
 
-    MessageType(String title, boolean coordinationMessage, boolean leaderElectionMessage) {
-        this(title, coordinationMessage, leaderElectionMessage, false);
+    MessageType(String title, boolean coordinationMessage, boolean heartbeatOrLeaderElectionMessage) {
+        this(title, coordinationMessage, heartbeatOrLeaderElectionMessage, false, false);
     }
 
-    MessageType(String title, boolean coordinationMessage, boolean leaderElectionMessage, boolean preparePhaseMessage) {
+    MessageType(String title, boolean coordinationMessage, boolean heartbeatOrLeaderElectionMessage, boolean preparePhaseMessage) {
+        this(title, coordinationMessage, heartbeatOrLeaderElectionMessage, preparePhaseMessage, false);
+    }
+
+
+    MessageType(String title, boolean coordinationMessage, boolean heartbeatOrLeaderElectionMessage, boolean preparePhaseMessage, boolean findLeaderMessage){
         this.title = title;
         this.coordinationMessage = coordinationMessage;
-        this.leaderElectionMessage = leaderElectionMessage;
+        this.heartbeatOrLeaderElectionMessage = heartbeatOrLeaderElectionMessage;
         this.preparePhaseMessage = preparePhaseMessage;
+        this.findLeaderMessage = findLeaderMessage;
     }
 
     public static MessageType titleToMessageType(String title) {
@@ -74,9 +85,15 @@ public enum MessageType {
         return coordinationMessage;
     }
 
-    public boolean isLeaderElectionMessage() {
-        return leaderElectionMessage;
+    public boolean heartbeatOrLeaderElectionMessage() {
+        return heartbeatOrLeaderElectionMessage;
     }
+
+    public boolean isFindLeaderMessage() {
+        return findLeaderMessage;
+    }
+
+
 
     public boolean isPreparePhaseMessage() {
         return preparePhaseMessage;

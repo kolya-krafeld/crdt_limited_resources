@@ -13,9 +13,18 @@ import java.util.stream.Collectors;
 
 public class BallotLeaderElection {
     private final Logger logger;
+    /**
+     * Current round of leader election.
+     */
     public int rnd;
-    private Node node;
-    private int timeout;
+    private final Node node;
+    /*
+     * Time the node waits for election replies.
+     */
+    private final int timeout;
+    /*
+     * Set of all election messages received in the current round, in the form of int ballotNumber, boolean quorumConnected, int id.
+     */
     private Set<BallotEntry> ballotEntries = new LinkedHashSet<>();
 
     public BallotLeaderElection(Node node, int timeout) {
@@ -37,6 +46,14 @@ public class BallotLeaderElection {
         }
     }
 
+    /**
+     * Starts a new round of leader election.
+     * Sends election messages to all nodes and waits for election replies.
+     * If node is quorum connected, the node with the highest ballot number is elected leader.
+     * If no quorum is connected, the function starts again and a new round of leader election is started.
+     *
+     * @return true if a leader was elected, false if a new round of leader election was started.
+     */
     private boolean roundOfLeaderElection() {
         String message = MessageType.ELECTION_REQUEST.getTitle() + ":" + rnd;
         node.messageHandler.broadcastIncludingSelf(message);
@@ -64,6 +81,11 @@ public class BallotLeaderElection {
         return false;
     }
 
+    /**
+     * Checks if a leader was elected by going through the ballots.
+     * If a leader was elected, the leader is set, the result is broadcast and the function returns true.
+     * Otherwise, returns false.
+     */
     private boolean checkLeader() {
         LinkedHashSet candidates = ballotEntries.stream().filter(BallotEntry::quorumConnected).collect(Collectors.toCollection(LinkedHashSet::new));
         if (candidates.isEmpty()) {
@@ -77,7 +99,7 @@ public class BallotLeaderElection {
                 logger.info("LeaderElection: No candidate with higher ballot number, increasing own ballot number to " + (this.node.ballotNumber) + " and starting new election");
                 this.node.setQuorumConnected(true);
                 return false;
-            } else if (maxCandidate.ballotNumber > this.node.leaderBallotNumber) {
+            } else {
                 this.node.leaderBallotNumber = maxCandidate.ballotNumber;
                 this.node.logger.info("LeaderElection: FOUND LEADER: ID " + maxCandidate.id + " with ballot number " + maxCandidate.ballotNumber);
                 String message = MessageType.ELECTION_RESULT.getTitle() + ":" + maxCandidate.id + "," + maxCandidate.ballotNumber;
@@ -85,9 +107,12 @@ public class BallotLeaderElection {
                 return true;
             }
         }
-        return false;
     }
 
+    /**
+     * Returns the candidate with the highest ballot number.
+     * If there are multiple candidates with the same highest ballot number, the candidate with the highest ID is returned.
+     */
     private BallotEntry getMaxCandidate(Set<BallotEntry> candidates) {
         ArrayList<BallotEntry> sortedCandidates = new ArrayList<>(candidates);
         sortedCandidates.sort(Comparator.comparing(BallotEntry::ballotNumber)
@@ -95,6 +120,9 @@ public class BallotLeaderElection {
         return sortedCandidates.get(sortedCandidates.size() - 1);
     }
 
+    /**
+     * Adds the election reply to the ballotEntries set if the round number is the same as the current round.
+     */
     public void handleElectionReply(Message message) {
         ElectionReplyMessage electionReply = ElectionReplyMessage.fromString(message.getContent());
         if (electionReply.rnd == this.rnd) {
