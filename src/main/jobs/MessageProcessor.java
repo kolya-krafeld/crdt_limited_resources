@@ -935,4 +935,8 @@ public class MessageProcessor extends Thread {
             function.apply();
         }
     }
+
+    public void setLeaderMergedCrdt(LimitedResourceCrdt leaderMergedCrdt) {
+        this.leaderMergedCrdt = leaderMergedCrdt;
+    }
 }
