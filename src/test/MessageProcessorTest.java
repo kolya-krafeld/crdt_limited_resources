@@ -1,6 +1,7 @@
 package test;
 
 import main.Config;
+import main.crdt.LimitedResourceCrdt;
 import main.utils.MessageHandler;
 import main.jobs.MessageProcessor;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,10 @@ class MessageProcessorTest {
 
         MessageProcessor messageProcessor = new MessageProcessor(node, messageHandler);
         messageProcessor.setStatesReceivedFrom(new HashSet(asList(8082, 8083)));
+        messageProcessor.setLeaderMergedCrdt(new LimitedResourceCrdt(3));
         messageProcessor.reassignLeases();
+
+        //todo
     }
 
 }
