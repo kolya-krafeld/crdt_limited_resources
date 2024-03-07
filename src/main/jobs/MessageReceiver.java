@@ -47,6 +47,17 @@ public class MessageReceiver extends Thread {
                 }
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
+                //if message was forwarded to leader, we need to extract the original message
+                if(message.getType()==MessageType.FORWARDED_TO_LEADER){
+                    message = Message.messageFromForwaredMessage(message.getContent());
+                }
+
+                //if message is for leader, but node is not the leader, forward the message to the leader
+                if(message.getType().isForLeaderMessage() && !node.isLeader()){
+                    logger.warn("Message is for leader, but this node is not the leader, forwarding message to the leader: " + node.getLeaderPort());
+                    String forwardMessage = MessageType.FORWARDED_TO_LEADER + ":" + message;
+                    node.messageHandler.sendToLeader(forwardMessage);
+                }else{
                 // Add message to the correct queue for processing
                 if (message.getType().isFindLeaderMessage()) {
                     node.findLeaderMessageQueue.add(message);
@@ -62,6 +73,7 @@ public class MessageReceiver extends Thread {
                     }
                     node.operationMessageQueue.add(message);
                 }
+            }
             }
         } catch (SocketException se) {
             logger.error("Socket exception: " + se.getMessage());
