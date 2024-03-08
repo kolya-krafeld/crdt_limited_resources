@@ -21,7 +21,7 @@ public class ClientTest {
         Node node;
         for (int i = 0; i < numberOfNodes; i++) {
             node = new Node(ports.get(i), ports, config);
-            node.getCrdt().setUpper(i, requestResources / numberOfNodes);
+            node.getLimitedResourceCrdt().setUpper(i, requestResources / numberOfNodes);
             node.setLeaderPort(ports.get(0));
             node.init(true);
             nodes.add(node);

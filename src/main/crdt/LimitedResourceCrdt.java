@@ -103,7 +103,6 @@ public class LimitedResourceCrdt implements Crdt {
         }
     }
 
-    @Override
     public boolean compare(Crdt other) {
         LimitedResourceCrdt otherCrdt = (LimitedResourceCrdt) other;
         for (int i = 0; i < numberOfProcesses; i++) {

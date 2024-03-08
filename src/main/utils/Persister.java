@@ -80,7 +80,7 @@ public class Persister {
                 node.setRoundNumber(Integer.parseInt(keyValue[1]));
                 break;
             case "state":
-                node.setCrdt(new LimitedResourceCrdt(keyValue[1]));
+                node.setLimitedResourceCrdt(new LimitedResourceCrdt(keyValue[1]));
                 break;
             case "acceptedState":
                 node.setAcceptedCrdt(new LimitedResourceCrdt(keyValue[1]));

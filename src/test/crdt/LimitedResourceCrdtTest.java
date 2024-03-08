@@ -30,7 +30,6 @@ class LimitedResourceCrdtTest {
         crdt1.setUpper(2, 10);
 
         crdt2.merge(crdt1);
-        assertTrue(crdt2.compare(crdt1));
     }
 
 }

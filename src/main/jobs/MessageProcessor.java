@@ -2,7 +2,10 @@ package main.jobs;
 
 import main.Node;
 import main.ballot_leader_election.ElectionReplyMessage;
+import main.crdt.Crdt;
 import main.crdt.LimitedResourceCrdt;
+import main.crdt.ORSet;
+import main.crdt.PNCounter;
 import main.failure_detector.HeartbeatMessage;
 import main.utils.*;
 
@@ -91,6 +94,10 @@ public class MessageProcessor extends Thread {
      */
     public void run() {
         while (true) {
+            if (!node.monotonicCrdtMessageQueue.isEmpty()) {
+                handleMonotonicCrdtMerge(node.monotonicCrdtMessageQueue.poll());
+            }
+
             if (!node.findLeaderMessageQueue.isEmpty()) {
                 matchFindLeaderMessage(node.findLeaderMessageQueue.poll());
             }
@@ -179,7 +186,7 @@ public class MessageProcessor extends Thread {
         }
         switch (message.getType()) {
             case INC:
-                node.getCrdt().increment(node.getOwnIndex());
+                node.getLimitedResourceCrdt().increment(node.getOwnIndex());
                 break;
             case DEC:
                 receiveDecrement(message);
@@ -255,7 +262,7 @@ public class MessageProcessor extends Thread {
             if (!node.isInPreparePhase()) {
                 logger.debug("Received old promise message.");
                 // Send accept-sync to follower.
-                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
                 messageHandler.send(messageStr, message.getPort());
                 return;
             }
@@ -298,7 +305,7 @@ public class MessageProcessor extends Thread {
     private void receivedPrepare() {
         if (!node.isLeader()) {
             // Get accepted crdt or otherwise the current crdt
-            LimitedResourceCrdt crdt = node.getAcceptedCrdt().orElse(node.getCrdt());
+            LimitedResourceCrdt crdt = node.getAcceptedCrdt().orElse(node.getLimitedResourceCrdt());
 
             String message = MessageType.PROMISE.getTitle() + ":" + node.getRoundNumber() + ":" + crdt;
             messageHandler.sendToLeader(message);
@@ -311,7 +318,7 @@ public class MessageProcessor extends Thread {
     private void startPreparePhase() {
         node.setInPreparePhase(true);
 
-        leaderMergedCrdt = node.getCrdt(); // set leader crdt first
+        leaderMergedCrdt = node.getLimitedResourceCrdt(); // set leader crdt first
         this.lastPrepareSent = System.currentTimeMillis();
         prepareAcceptSyncAlreadySent = false; // Reset flag
 
@@ -336,7 +343,7 @@ public class MessageProcessor extends Thread {
                 // we will send a DECIDE message to all processes. And the follower will receive it and end the restart phase.
             } else {
                 // We are not in the same coordination phase as before. Send accept-sync to follower.
-                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
                 messageHandler.send(messageStr, message.getPort());
             }
         }
@@ -356,7 +363,7 @@ public class MessageProcessor extends Thread {
             node.setLastDecideRoundNumber(leaderRoundNumber);
 
             // Persist newly loaded state
-            persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+            persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             node.setLeaderPort(message.getPort());
             node.setInRestartPhase(false);
@@ -377,9 +384,9 @@ public class MessageProcessor extends Thread {
                 // Increase round number
                 node.setRoundNumber(node.getRoundNumber() + 1);
 
-                persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+                persister.persistState(true, node.getRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
                 node.setInCoordinationPhase(true);
-                leaderMergedCrdt = node.getCrdt(); // set leader crdt first
+                leaderMergedCrdt = node.getLimitedResourceCrdt(); // set leader crdt first
                 leaseRequestFrom.clear();
 
                 leaseRequestFrom.add(message.getPort());
@@ -411,12 +418,12 @@ public class MessageProcessor extends Thread {
             int roundNumber = Integer.parseInt(message.getContent());
             node.setRoundNumber(roundNumber);
 
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+            persister.persistState(true, node.getRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
             node.setInCoordinationPhase(true);
 
             // Function that sends state message. Is triggered below (either after delay or immediately)
             Function sendStateMessage = () -> {
-                String outMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() + ":" + node.getCrdt().toString();
+                String outMessage = MessageType.STATE.getTitle() + ":" + node.getRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
                 messageHandler.sendToLeader(outMessage);
             };
 
@@ -527,7 +534,7 @@ public class MessageProcessor extends Thread {
             node.setAcceptedCrdt(new LimitedResourceCrdt(crdtString));
 
             // Persist state before sending ACCEPTED to leader
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
+            persister.persistState(true, node.getRoundNumber(), node.getLimitedResourceCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
             // Function that sends accepted message. Is triggered below (either after delay or immediately)
             Function sendAcceptedMessage = () -> {
@@ -574,7 +581,7 @@ public class MessageProcessor extends Thread {
                 node.setLastDecideRoundNumber(node.getRoundNumber());
 
                 // Persist state before sending DECIDE to all nodes
-                persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+                persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
                 String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + leaderMergedCrdt.toString();
                 messageHandler.broadcast(outMessage);
@@ -617,10 +624,10 @@ public class MessageProcessor extends Thread {
             node.setOutOfResources(false);
         }
 
-        node.getCrdt().merge(mergingCrdt);
+        node.getLimitedResourceCrdt().merge(mergingCrdt);
         node.setAcceptedCrdt(null); // Reset accepted CRDT because it was decided now
         // Persist state after merging
-        persister.persistState(false, node.getLastDecideRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+        persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
         if (node.isInRestartPhase()) {
             node.setLeaderPort(message.getPort()); // If we were in restart phase we need to update leader port
@@ -643,7 +650,7 @@ public class MessageProcessor extends Thread {
      * Send decide with current leader state to node that we got an old message from.
      */
     private void sendDecideForOldMessage(Message message) {
-        String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getCrdt().toString();
+        String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
         messageHandler.send(outMessage, message.getPort());
     }
 
@@ -748,7 +755,7 @@ public class MessageProcessor extends Thread {
 
         // Out of resources: deny request straight away.
         // We need to double check if node is really out of resources
-        if (node.isOutOfResources() && node.getCrdt().queryProcess(node.getOwnIndex()) == 0) {
+        if (node.isOutOfResources() && node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex()) == 0) {
             logger.info("Out of resources. Cannot decrement counter.");
 
             // Notify client about unsuccessful decrement
@@ -757,7 +764,7 @@ public class MessageProcessor extends Thread {
         }
 
 
-        int ownResourcesLeft = node.getCrdt().queryProcess(node.getOwnIndex());
+        int ownResourcesLeft = node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex());
 
         if (ownResourcesLeft == 0 && node.isFinalResources()) {
             // We are in final resource mode and have no resources assigned. We need to ask the leader for every new lease.
@@ -770,28 +777,28 @@ public class MessageProcessor extends Thread {
         } else if (node.isFinalResources()) {
             // We are in final resource mode but got resources assigned. We can decrement the counter now.
 
-            node.getCrdt().decrement(node.getOwnIndex());
+            node.getLimitedResourceCrdt().decrement(node.getOwnIndex());
             // Persist state before sending APPROVE to client
-            persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
+            persister.persistState(false, node.getRoundNumber(), node.getLimitedResourceCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
             // Notify client about successful decrement
             messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
         } else {
             // BASE CASE: we have resources assigned
 
-            boolean successful = node.getCrdt().decrement(node.getOwnIndex());
+            boolean successful = node.getLimitedResourceCrdt().decrement(node.getOwnIndex());
             if (!successful) {
                 logger.error("Could not decrement counter.");
                 // todo send request for lease
             } else {
                 // Persist state before sending APPROVE to client
-                persister.persistState(false, node.getRoundNumber(), node.getCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
+                persister.persistState(false, node.getRoundNumber(), node.getLimitedResourceCrdt(), node.getAcceptedCrdt(), node.leaderBallotNumber);
 
                 // Notify client about successful decrement
                 messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
 
                 // Query CRDT and request leases if we have no leases left
-                ownResourcesLeft = node.getCrdt().queryProcess(node.getOwnIndex());
+                ownResourcesLeft = node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex());
                 if (ownResourcesLeft == 0) {
                     logger.info("No resources left.");
                     requestLeases();
@@ -810,7 +817,7 @@ public class MessageProcessor extends Thread {
 
         if (node.isLeader()) {
             // Prepare coordination phase
-            leaderMergedCrdt = node.getCrdt(); // set leader crdt first
+            leaderMergedCrdt = node.getLimitedResourceCrdt(); // set leader crdt first
             leaseRequestFrom.clear();
             leaseRequestFrom.add(node.getOwnPort());
 
@@ -819,16 +826,16 @@ public class MessageProcessor extends Thread {
             // Increase round number & persist state again
             node.setRoundNumber(node.getRoundNumber() + 1);
 
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+            persister.persistState(true, node.getRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
             // Send Request State to all other nodes
             logger.info("Leader ran out of resources. Starting coordination phase.");
             String message = MessageType.REQS.getTitle() + ":" + node.getRoundNumber();
             messageHandler.broadcast(message);
         } else {
-            persister.persistState(true, node.getRoundNumber(), node.getCrdt(), Optional.empty(), node.leaderBallotNumber);
+            persister.persistState(true, node.getRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
-            String outMessage = MessageType.REQL.getTitle() + ":" + node.getCrdt().toString();
+            String outMessage = MessageType.REQL.getTitle() + ":" + node.getLimitedResourceCrdt().toString();
             messageHandler.sendToLeader(outMessage);
         }
     }
@@ -889,6 +896,43 @@ public class MessageProcessor extends Thread {
             node.findLeaderAnswers.put(leaderPort, new Integer[]{node.findLeaderAnswers.get(leaderPort)[0] + 1, leaderBallot});
         } else {
             node.findLeaderAnswers.put(leaderPort, new Integer[]{1, leaderBallot});
+        }
+    }
+
+    // --------------------------------------------------------------------------------------
+    // ----------------- MONOTONIC CRDT MESSAGE HANDLING ------------------------------------
+    // --------------------------------------------------------------------------------------
+
+    /**
+     * Merge incoming monotonic CRDT with existing CRDT in map.
+     */
+    private void handleMonotonicCrdtMerge(Message message) {
+        if (message != null && message.getType() == MessageType.MERGE_MONOTONIC) {
+            String[] parts = message.getContent().split(":");
+            String id = parts[0];
+            String crdtType = parts[1];
+            String crdtString = parts[2];
+
+            Crdt mergedCrdt = null;
+            if (crdtType.equals("pncounter")) {
+                mergedCrdt = new PNCounter(crdtString);
+            } else if (crdtType.equals("orset")) {
+                mergedCrdt = new ORSet(crdtString);
+            }
+
+            if (mergedCrdt == null) {
+                logger.error("Unknown monotonic CRDT type: " + crdtType);
+                return;
+            }
+
+            Crdt existingCrdt = node.getMonotonicCrdts().get(id);
+            if (existingCrdt == null) {
+                node.getMonotonicCrdts().put(id, mergedCrdt);
+            } else {
+                existingCrdt.merge(mergedCrdt);
+                node.getMonotonicCrdts().put(id, existingCrdt);
+                logger.debug("Merged monotonic CRDT: " + id + " " + existingCrdt);
+            }
         }
     }
 

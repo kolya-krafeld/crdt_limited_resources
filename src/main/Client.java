@@ -1,5 +1,8 @@
 package main;
 
+import main.crdt.Crdt;
+import main.crdt.ORSet;
+import main.crdt.PNCounter;
 import main.utils.Message;
 import main.utils.MessageType;
 
@@ -9,9 +12,11 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * Client class that sends requests to the system.
@@ -60,11 +65,14 @@ public class Client extends Thread {
         Node node;
         for (int i = 0; i < numberOfNodes; i++) {
             node = new Node(ports.get(i), ports, config);
-            node.getCrdt().setUpper(i, 10);
+            node.getLimitedResourceCrdt().setUpper(i, 10);
             node.setLeaderPort(ports.get(0));
             node.init(true);
             nodes.add(node);
         }
+
+        nodes.get(0).addPNCounterCrdt("counter");
+        nodes.get(0).addORSetCrdt("set");
 
         // Delay coordination messages from this node
         //nodes.get(1).setAddMessageDelay(true);
@@ -91,6 +99,7 @@ public class Client extends Thread {
             Thread.sleep(sleepTimeBetweenRequests);
             for (int i = 0; i < this.numberOfRequest; i++) {
                 requestResource();
+                incrementMonotonicCrdts();
                 Thread.sleep(sleepTimeBetweenRequests);
             }
 
@@ -102,6 +111,37 @@ public class Client extends Thread {
     public void stopProcesses() {
         executor.shutdown();
         messageReceiver.interrupt();
+    }
+
+    public void incrementMonotonicCrdts() {
+        int indexOfNode = (int) (Math.random() * nodePorts.size());
+        Node node = nodes.get(indexOfNode);
+
+        double random = Math.random();
+        Crdt counter = node.getMonotonicCrdts().get("counter");
+        if (counter != null) {
+            PNCounter pnCounter = (PNCounter) counter;
+            if (random < 0.3) {
+                pnCounter.decrement(indexOfNode);
+            } else {
+                pnCounter.increment(indexOfNode);
+            }
+        }
+
+        Crdt set = node.getMonotonicCrdts().get("set");
+        if (set != null) {
+            ORSet<String> orSet = (ORSet<String>) set;
+            if (random < 0.3) {
+                // Remove random entry
+                Set<String> currentEntries = orSet.query();
+                if (currentEntries.size() == 0) {
+                    return;
+                }
+                orSet.remove(currentEntries.stream().collect(Collectors.toList()).get((int) (Math.random() * currentEntries.size())));
+            } else {
+                orSet.add("element" + indexOfNode);
+            }
+        }
     }
 
     public void requestResource() {
