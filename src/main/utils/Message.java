@@ -1,6 +1,9 @@
 package main.utils;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Message {
 
@@ -47,5 +50,29 @@ public class Message {
                 ", type=" + type +
                 ", content='" + content + '\'' +
                 '}';
+
     }
+
+    public static Message messageFromForwaredMessage(String str) {
+        Pattern pattern = Pattern.compile("Message\\{address=(.*), port=(\\d+), type=(.*), content='(.*)'\\}");
+        Matcher matcher = pattern.matcher(str);
+    
+        if (matcher.find()) {
+            InetAddress originalAddress = null;
+            try {
+                String addressStr = matcher.group(1).replaceFirst("/", "");
+                originalAddress = InetAddress.getByName(addressStr);
+            } catch (UnknownHostException e) {
+                throw new RuntimeException(e);
+            }
+            int originalPort = Integer.parseInt(matcher.group(2));
+            String messageType = MessageType.valueOf(matcher.group(3)).getTitle();
+            String messageContent = matcher.group(4);
+            String messageString = messageType + ":"+ messageContent;
+            return new Message(originalAddress, originalPort, messageString);
+        } else {
+            throw new RuntimeException("Error parsing message from forwarded message");
+        }
+    }
+
 }

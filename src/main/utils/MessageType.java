@@ -38,7 +38,14 @@ public enum MessageType {
     INC("increment", false),
     DEC("decrement", false),
     APPROVE_RES("approve-resource", false),
-    DENY_RES("deny-resource", false);
+    DENY_RES("deny-resource", false),
+
+    /**
+     * If a message that is supposed to be sent to the leader, reaches a follower (e.g. if the sender doesn't know the current leader),
+     * the receiver will forward the message to the leader. As it is important for the leader to get the message with the original port
+     * this message contains the original message.
+     */
+    FORWARDED_TO_LEADER("forwarded-to-leader", false);
 
 
     private final String title;
@@ -94,9 +101,11 @@ public enum MessageType {
         return findLeaderMessage;
     }
 
-
-
     public boolean isPreparePhaseMessage() {
         return preparePhaseMessage;
+    }
+
+    public boolean isForLeaderMessage() {
+        return this == REQL || this == STATE || this == ACCEPTED || this ==PROMISE ||this == FORWARDED_TO_LEADER;
     }
 }

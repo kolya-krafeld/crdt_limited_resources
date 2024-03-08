@@ -92,7 +92,6 @@ public class MessageProcessor extends Thread {
      * the node missed the last election
      *
      */
-    //TODO: nachrichten an leadre weiterleiten falls diese nicht leader ist
     public void run() {
         while (true) {
             if (!node.monotonicCrdtMessageQueue.isEmpty()) {
