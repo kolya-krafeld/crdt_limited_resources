@@ -32,6 +32,7 @@ public enum MessageType {
 
     // CRDT Merge
     MERGE("merge", false),
+    MERGE_MONOTONIC("merge-monotonic", true),
 
     // Client messages
     INC("increment", false),

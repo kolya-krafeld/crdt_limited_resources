@@ -1,7 +1,10 @@
 package main;
 
 import main.ballot_leader_election.BallotLeaderElection;
+import main.crdt.Crdt;
 import main.crdt.LimitedResourceCrdt;
+import main.crdt.ORSet;
+import main.crdt.PNCounter;
 import main.jobs.CrdtMerger;
 import main.jobs.MessageProcessor;
 import main.jobs.MessageReceiver;
@@ -24,6 +27,16 @@ import java.util.concurrent.*;
 public class Node {
 
     public Logger logger = new Logger(Logger.LogLevel.DEBUG, this);
+
+    /**
+     * CRDT that only allows access to limited ressources.
+     */
+    private LimitedResourceCrdt limitedResourceCrdt;
+
+    /**
+     * Map of all monotonic CRDTs. Maps a unique identifier to a CRDT.
+     */
+    private Map<String, Crdt> monotonicCrdts = new HashMap<>();
 
     /**
      * Persists state of node to local file, to save state after a restart.
@@ -70,6 +83,11 @@ public class Node {
     public boolean isSearchingForLeader = false;
 
     /**
+     * Queue of merge messages for monotonic CRDTs.
+     */
+    public LinkedBlockingDeque<Message> monotonicCrdtMessageQueue = new LinkedBlockingDeque<>();
+
+    /**
      * Queue of messages to be processed outside of coordination phase. Using concurrent queue to make it thread safe.
      */
     public LinkedBlockingDeque<Message> operationMessageQueue = new LinkedBlockingDeque<>();
@@ -105,8 +123,8 @@ public class Node {
 
     private int leaderPort = -1;
     public int leaderBallotNumber = 0;
-    /*
-    * Own ballot number of the node
+    /**
+     * Own ballot number of the node
      */
     public int ballotNumber = 0;
     public boolean leaderElectionInProcess=false;
@@ -129,11 +147,6 @@ public class Node {
      * Flag to indicate if the node is connected to a majority of nodes.
      */
     private boolean isQuorumConnected = true;
-
-    /**
-     * CRDT that only allows access to limited ressources.
-     */
-    private LimitedResourceCrdt crdt;
 
     /**
      * CRDT that was accepted in the last coordination phase.
@@ -170,7 +183,7 @@ public class Node {
     public Node(int port, List<Integer> nodesPorts, Config config) {
         this.ownPort = port;
         this.nodesPorts = nodesPorts;
-        this.crdt = new LimitedResourceCrdt(nodesPorts.size());
+        this.limitedResourceCrdt = new LimitedResourceCrdt(nodesPorts.size());
         this.persister = new Persister(this);
 
         this.quorumSize = (nodesPorts.size() / 2) + 1;
@@ -203,7 +216,7 @@ public class Node {
      */
     public void init(boolean startFailureDetector) {
         // Persist state at beginning
-        persister.persistState(false, 0, crdt, Optional.empty(), this.leaderBallotNumber);
+        persister.persistState(false, 0, limitedResourceCrdt, Optional.empty(), this.leaderBallotNumber);
 
         ScheduledExecutorService clockExecutor = Executors.newScheduledThreadPool(1);
         clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tickLength(), TimeUnit.MILLISECONDS);
@@ -283,23 +296,40 @@ public class Node {
         //maybe we have to set inCoordinationPhase = true, but as leaderElection happens on another layer, it should work
         this.ballotLeaderElection.start();
     }
+
     /**
      * Deserializes the CRDT from the message and merges it with the current CRDT.
      */
     public void mergeCrdts(String crdtString) {
         LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
-        crdt.merge(mergingCrdt);
-        logger.debug("Merged crdt: " + crdt);
+        limitedResourceCrdt.merge(mergingCrdt);
+        logger.debug("Merged crdt: " + limitedResourceCrdt);
+    }
+
+    /**
+     * Add a new positive-negative counter CRDT to the node.
+     */
+    public void addPNCounterCrdt(String identifier) {
+        Crdt pnCounter = new PNCounter(this.nodesPorts.size());
+        monotonicCrdts.put(identifier, pnCounter);
+    }
+
+    /**
+     * Add a new ORSet CRDT to the node.
+     */
+    public void addORSetCrdt(String identifier) {
+        Crdt orSet = new ORSet();
+        monotonicCrdts.put(identifier, orSet);
     }
 
     // GETTERS & SETTERS
 
-    public LimitedResourceCrdt getCrdt() {
-        return crdt;
+    public LimitedResourceCrdt getLimitedResourceCrdt() {
+        return limitedResourceCrdt;
     }
 
-    public void setCrdt(LimitedResourceCrdt crdt) {
-        this.crdt = crdt;
+    public void setLimitedResourceCrdt(LimitedResourceCrdt limitedResourceCrdt) {
+        this.limitedResourceCrdt = limitedResourceCrdt;
     }
 
     public boolean isLeader() {
@@ -413,5 +443,9 @@ public class Node {
 
     public void setInPreparePhase(boolean inPreparePhase) {
         this.inPreparePhase = inPreparePhase;
+    }
+
+    public Map<String, Crdt> getMonotonicCrdts() {
+        return monotonicCrdts;
     }
 }

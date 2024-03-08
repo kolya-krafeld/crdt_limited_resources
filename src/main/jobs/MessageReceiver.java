@@ -48,7 +48,9 @@ public class MessageReceiver extends Thread {
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                 // Add message to the correct queue for processing
-                if (message.getType().isFindLeaderMessage()) {
+                if (message.getType() == MessageType.MERGE_MONOTONIC) {
+                    node.monotonicCrdtMessageQueue.add(message);
+                } else if (message.getType().isFindLeaderMessage()) {
                     node.findLeaderMessageQueue.add(message);
                 } else if (message.getType().heartbeatOrLeaderElectionMessage()) {
                     node.heartbeatAndElectionMessageQueue.add(message);

@@ -11,8 +11,8 @@ public interface Crdt {
     public void merge(Crdt other);
 
     /**
-     * Compare the state of this CRDT with the state of another CRDT.
-     * @return true if this CRDT is greater or equal to other CRDT.
+     * Get string representation of the CRDT to be sent over the network.
      */
-    public boolean compare(Crdt other);
+    @Override
+    public String toString();
 }
