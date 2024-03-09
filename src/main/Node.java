@@ -26,7 +26,12 @@ import java.util.concurrent.*;
  */
 public class Node {
 
-    public Logger logger = new Logger(Logger.LogLevel.DEBUG, this);
+    public Logger logger = new Logger(Logger.LogLevel.ERROR, this);
+
+    /**
+     * Flag to indicate if the node should coordinate for every resource. Used for benchmarking.
+     */
+    private boolean coordinateForEveryResource = false;
 
     /**
      * CRDT that only allows access to limited ressources.
@@ -447,5 +452,13 @@ public class Node {
 
     public Map<String, Crdt> getMonotonicCrdts() {
         return monotonicCrdts;
+    }
+
+    public boolean isCoordinateForEveryResource() {
+        return coordinateForEveryResource;
+    }
+
+    public void setCoordinateForEveryResource(boolean coordinateForEveryResource) {
+        this.coordinateForEveryResource = coordinateForEveryResource;
     }
 }

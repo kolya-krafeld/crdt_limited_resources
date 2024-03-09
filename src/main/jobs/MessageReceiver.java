@@ -21,6 +21,8 @@ public class MessageReceiver extends Thread {
 
     private boolean stopped = false;
 
+    private int decMessagesReceived = 0;
+
     public MessageReceiver(Node node) {
         this.node = node;
         this.logger = node.logger;
@@ -48,8 +50,12 @@ public class MessageReceiver extends Thread {
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                 //if message was forwarded to leader, we need to extract the original message
-                if(message.getType()==MessageType.FORWARDED_TO_LEADER){
+                if (message.getType()==MessageType.FORWARDED_TO_LEADER){
                     message = Message.messageFromForwaredMessage(message.getContent());
+                }
+
+                if (message.getType() == null) {
+                    logger.error("Message type is null");
                 }
 
                 //if message is for leader, but node is not the leader, forward the message to the leader
@@ -72,6 +78,13 @@ public class MessageReceiver extends Thread {
                 } else {
                     if (message == null) {
                         logger.error("Message is null");
+                    }
+
+                    // Todo remove: only used for benchmarking
+                    if (message.getType() == MessageType.DEC) {
+                        decMessagesReceived++;
+                        if (decMessagesReceived % 10000 == 0)
+                            System.out.println("Received " + decMessagesReceived + " dec messages");
                     }
                     node.operationMessageQueue.add(message);
                 }

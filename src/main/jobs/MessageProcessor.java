@@ -21,12 +21,14 @@ public class MessageProcessor extends Thread {
 
     private final Node node;
     private final MessageHandler messageHandler;
-    private final Persister persister;
-    private final long messageWaitTime = 100;
+
     /**
      * CRDT that is only used by the leader to merge all CRDTs they get from the State calls.
      */
     private LimitedResourceCrdt leaderMergedCrdt = null;
+    private final Persister persister;
+    private final long messageWaitTime = 70;
+
     /**
      * Set of all nodes (ports) that we have received a state from.
      */
@@ -57,10 +59,9 @@ public class MessageProcessor extends Thread {
     private long lastPrepareSent = 0;
 
     /**
-     * Round when the last accepted/decide was send. Prevents sending accepted messages multiple times in one round.
+     * Round when the last accepted was send. Prevents sending accepted messages multiple times in one round.
      */
     private int lastAcceptRoundSend = 0;
-    private int lastDecideRoundSend = 0;
 
     /**
      * Flag to indicate that we have already sent an accept-sync message in this prepare phase.
@@ -275,27 +276,32 @@ public class MessageProcessor extends Thread {
             leaderMergedCrdt.merge(state);
             statesReceivedFrom.add(message.getPort());
 
-            Function processPrepareMajority = () -> {
-                if (prepareAcceptSyncAlreadySent) {
-                    // We have already sent an accepted message in this round. We can ignore this.
-                    logger.debug("We have already sent a accept-sync message in this prepare phase.");
-                    return;
-                }
-
-                // Set new round number
-                node.setRoundNumber(maxRoundNumberInPreparePhase);
-                node.setLastDecideRoundNumber(maxRoundNumberInPreparePhase);
-
-                // Send ACCEPT-SYNC to all nodes
-                String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString();
-                messageHandler.broadcast(outMessage);
-
-                // Reset number of promises
-                numberOfPromises = 0;
-            };
-
-            triggerNextCoordinationStateWhenReady(numberOfPromises, lastPrepareSent, processPrepareMajority);
+            triggerNextCoordinationStateWhenReady(numberOfPromises, lastPrepareSent, QuorumMessageType.PROMISE, roundNumber);
         }
+    }
+
+    /**
+     * Send ACCEPT_SYNC to all followers (in restart phase).
+     * Only triggered after we have received a state from all nodes OR a quorum and the timeout has passed.
+     */
+    private synchronized void sendAcceptSyncMessageAfterQuorumReached() {
+        if (prepareAcceptSyncAlreadySent) {
+            // We have already sent an accept-sync message in this round. We can ignore this.
+            logger.debug("We have already sent a accept-sync message in this prepare phase.");
+            return;
+        }
+
+        // Set new round number
+        node.setRoundNumber(maxRoundNumberInPreparePhase);
+        node.setLastDecideRoundNumber(maxRoundNumberInPreparePhase);
+
+        // Send ACCEPT-SYNC to all nodes
+        String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString();
+        messageHandler.broadcast(outMessage);
+        prepareAcceptSyncAlreadySent = true;
+
+        // Reset number of promises
+        numberOfPromises = 0;
     }
 
     /**
@@ -453,36 +459,63 @@ public class MessageProcessor extends Thread {
 
             // Check if message is from an older coordination round
             if (isOldMessage(roundNumber)) {
-                logger.debug("Received old state message.");
+                logger.info("Received old state message.");
                 sendDecideForOldMessage(message);
                 return;
             }
 
             LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
             leaderMergedCrdt.merge(state);
+            logger.info("Merged state CRDT: " + state + " to " + leaderMergedCrdt.toString());
             statesReceivedFrom.add(message.getPort());
 
-            Function processStateMajority = () -> {
-                if (lastAcceptRoundSend >= node.getRoundNumber()) {
-                    // We have already sent an accepted message in this round. We can ignore this.
-                    logger.debug("We have already sent a accept message in this round.");
-                    return;
-                }
+            triggerNextCoordinationStateWhenReady(statesReceivedFrom.size(), lastRequestStateSent, QuorumMessageType.STATE, roundNumber);
+        }
+    }
 
-                reassignLeases();
-                logger.debug("Leader proposes state: " + leaderMergedCrdt);
+    /**
+     * Send ACCEPT to all followers.
+     * Only triggered after we have received a state from all nodes OR a quorum and the timeout has passed.
+     */
+    private synchronized void sendAcceptMessageAfterQuorumReached(int roundNumber) {
+        if (lastAcceptRoundSend >= roundNumber) {
+            // We have already sent an accepted message in this round. We can ignore this.
+            logger.debug("We have already sent a accept message in this round.");
+            return;
+        }
 
-                // Send ACCEPT to all nodes
-                this.lastAcceptSent = System.currentTimeMillis();
-                this.lastAcceptRoundSend = node.getRoundNumber();
-                String outMessage = MessageType.ACCEPT.getTitle() + ":" + node.getRoundNumber() + ":" + leaderMergedCrdt.toString();
-                messageHandler.broadcast(outMessage);
+        reassignLeases();
+        logger.debug("Leader proposes state: " + leaderMergedCrdt);
 
-                // Reset state variables
-                statesReceivedFrom.clear();
-            };
+        // Send ACCEPT to all nodes
+        this.lastAcceptSent = System.currentTimeMillis();
+        this.lastAcceptRoundSend = node.getRoundNumber();
+        String outMessage = MessageType.ACCEPT.getTitle() + ":" + node.getRoundNumber() + ":" + leaderMergedCrdt.toString();
+        messageHandler.broadcast(outMessage);
 
-            triggerNextCoordinationStateWhenReady(statesReceivedFrom.size(), lastRequestStateSent, processStateMajority);
+        // Reset state variables
+        statesReceivedFrom.clear();
+    }
+
+
+    /**
+     * Message types that we need at least a quorum of messages for to continue.
+     */
+    enum QuorumMessageType {
+        PROMISE, STATE, ACCEPTED
+    }
+
+    private void triggerNextCoordinationBasedOnQuorumType(QuorumMessageType messageType, int roundNumber) {
+        switch (messageType) {
+            case PROMISE:
+                sendAcceptSyncMessageAfterQuorumReached();
+                break;
+            case STATE:
+                sendAcceptMessageAfterQuorumReached(roundNumber);
+                break;
+            case ACCEPTED:
+                sendDecideMessageAfterQuorumReached(roundNumber);
+                break;
         }
     }
 
@@ -493,27 +526,27 @@ public class MessageProcessor extends Thread {
      * Case 3: We have received STATE/ACCEPTED/PROMISE message from a quorum of nodes but we have not passed the wait time yet.
      * -> Start a new thread that waits for the remaining time and then triggers the function.
      */
-    private void triggerNextCoordinationStateWhenReady(int messagesReceivedFrom, long lastMessageSent, Function function) {
+    private void triggerNextCoordinationStateWhenReady(int amountOfMessagesReceived, long lastMessageSent, QuorumMessageType messageType, int roundNumber) {
         // +1 is for leader
-        if (messagesReceivedFrom + 1 == node.getNodesPorts().size()) {
+        if (amountOfMessagesReceived + 1 == node.getNodesPorts().size()) {
             logger.debug("Received messages from all nodes.");
 
             // Trigger function
-            function.apply();
+            triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
             return;
         }
         // +1 is for leader
-        if (messagesReceivedFrom + 1 >= node.getQuorumSize()
+        if (amountOfMessagesReceived + 1 >= node.getQuorumSize()
                 && System.currentTimeMillis() > messageWaitTime + lastMessageSent) {
             logger.debug("Received messages from quorum of nodes after wait time had passed.");
             // Trigger function
-            function.apply();
-        } else if (messagesReceivedFrom + 1 >= node.getQuorumSize()) {
+            triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
+        } else if (amountOfMessagesReceived + 1 >= node.getQuorumSize()) {
             logger.debug("Received messages from quorum of nodes but wait time has not passed yet.");
 
             // Trigger function
             long waitTime = messageWaitTime + lastMessageSent - System.currentTimeMillis(); // This is how long we have to wait before triggering the function
-            WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(waitTime, function);
+            WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(waitTime, messageType, roundNumber);
             messageWaitTimeTrigger.start();
         }
     }
@@ -569,32 +602,35 @@ public class MessageProcessor extends Thread {
             }
 
             numberOfAccepted++;
-
-            Function processAcceptedMajority = () -> {
-                if (lastDecideRoundSend >= node.getRoundNumber()) {
-                    // We have already sent an accepted message in this round. We can ignore this.
-                    logger.debug("We have already sent a decide message in this round.");
-                    return;
-                }
-
-                // Set last decide round number
-                node.setLastDecideRoundNumber(node.getRoundNumber());
-
-                // Persist state before sending DECIDE to all nodes
-                persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
-
-                String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + leaderMergedCrdt.toString();
-                messageHandler.broadcast(outMessage);
-
-
-                // End coordination phase
-                node.setInCoordinationPhase(false);
-                numberOfAccepted = 0;
-                statesReceivedFrom.clear();
-            };
-
-            triggerNextCoordinationStateWhenReady(numberOfAccepted, lastAcceptSent, processAcceptedMajority);
+            triggerNextCoordinationStateWhenReady(numberOfAccepted, lastAcceptSent, QuorumMessageType.ACCEPTED, roundNumber);
         }
+    }
+
+    /**
+     * Send DECIDE to all followers.
+     * Only triggered after we have received a state from all nodes OR a quorum and the timeout has passed.
+     */
+    private synchronized void sendDecideMessageAfterQuorumReached(int roundNumber) {
+        if (node.getLastDecideRoundNumber() >= roundNumber) {
+            // We have already sent a decide message in this round. We can ignore this.
+            logger.debug("We have already sent a decide message in this round.");
+            return;
+        }
+
+        // Set last decide round number
+        node.setLastDecideRoundNumber(node.getRoundNumber());
+
+        // Persist state before sending DECIDE to all nodes
+        persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
+
+        logger.debug("Leader decides state: " + leaderMergedCrdt + " with round number: " + node.getLastDecideRoundNumber());
+        String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + leaderMergedCrdt.toString();
+        messageHandler.broadcast(outMessage);
+
+        // End coordination phase
+        node.setInCoordinationPhase(false);
+        numberOfAccepted = 0;
+        statesReceivedFrom.clear();
     }
 
     /**
@@ -605,15 +641,22 @@ public class MessageProcessor extends Thread {
         String[] messageParts = message.getContent().split(":");
 
         int roundNumber = Integer.parseInt(messageParts[0]);
+
+        if (isOldMessage(roundNumber)) {
+            logger.debug("Received old decide message.");
+            return;
+        }
+
         node.setRoundNumber(roundNumber); // Required to set if this is a response to an old message
         node.setLastDecideRoundNumber(roundNumber);
 
         String crdtString = messageParts[1];
         LimitedResourceCrdt mergingCrdt = new LimitedResourceCrdt(crdtString);
+        node.getLimitedResourceCrdt().merge(mergingCrdt);
 
         // Check to see how many resources are left
-        int assignedResourcesToMe = mergingCrdt.queryProcess(node.getOwnIndex());
-        int resourcesLeftForLeader = mergingCrdt.queryProcess(node.getNodesPorts().indexOf(node.getLeaderPort()));
+        int assignedResourcesToMe = node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex());
+        int resourcesLeftForLeader = node.getLimitedResourceCrdt().queryProcess(node.getNodesPorts().indexOf(node.getLeaderPort()));
 
         if (resourcesLeftForLeader == 0 && assignedResourcesToMe == 0) {
             // Leader has no resources left. Therefore, we are out of resources now!
@@ -624,7 +667,6 @@ public class MessageProcessor extends Thread {
             node.setOutOfResources(false);
         }
 
-        node.getLimitedResourceCrdt().merge(mergingCrdt);
         node.setAcceptedCrdt(null); // Reset accepted CRDT because it was decided now
         // Persist state after merging
         persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
@@ -651,6 +693,7 @@ public class MessageProcessor extends Thread {
      */
     private void sendDecideForOldMessage(Message message) {
         String outMessage = MessageType.DECIDE.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
+        logger.debug("Sending decide for old message: " + outMessage);
         messageHandler.send(outMessage, message.getPort());
     }
 
@@ -683,8 +726,24 @@ public class MessageProcessor extends Thread {
 
         logger.info("Available resources: " + availableResources);
 
-        // We will set the lower bound for all active processes to highest lower bound
-        int highestLowerBound = leaderMergedCrdt.getLowerCounter().stream().max(Integer::compare).get();
+        if (node.isCoordinateForEveryResource()) {
+            if (availableResources > 0) {
+                // Get index of first requester
+                int indexOfRequester = node.getNodesPorts().indexOf(leaseRequestFrom.get(0));
+                // Give requesting process one lease (just increment it)
+                leaderMergedCrdt.setUpper(indexOfRequester, leaderMergedCrdt.getUpperCounter().get(indexOfRequester) + 1);
+
+                // Rust take away one resource from the leader
+                leaderMergedCrdt.setLower(node.getOwnIndex(),  leaderMergedCrdt.getLowerCounter().get(node.getOwnIndex()) + 1);
+            } else {
+                // We are out of resources now
+                node.setOutOfResources(true);
+            }
+            return;
+        }
+
+        // We will set the lower bound for all active processes to highest upper bound
+        int highestUpperCounter = leaderMergedCrdt.getUpperCounter().stream().max(Integer::compare).get();
 
         int amountOfStates = statesReceivedFrom.size() + 1; // +1 for the leader
 
@@ -702,8 +761,8 @@ public class MessageProcessor extends Thread {
             for (int i = 0; i < node.getNodesPorts().size(); i++) {
                 if (i == node.getOwnIndex() || statesReceivedFrom.contains(node.getNodesPorts().get(i))) {
                     int additional = resourcesLeft > 0 ? 1 : 0; // Add one additional resource to the first nodes
-                    leaderMergedCrdt.setUpper(i, highestLowerBound + resourcesPerNode + additional);
-                    leaderMergedCrdt.setLower(i, highestLowerBound);
+                    leaderMergedCrdt.setUpper(i, highestUpperCounter + resourcesPerNode + additional);
+                    leaderMergedCrdt.setLower(i, highestUpperCounter);
                     resourcesLeft--;
                 }
             }
@@ -712,7 +771,6 @@ public class MessageProcessor extends Thread {
             // We assign the remaining leases to the leader for this time.
 
             // Set upper and lower count to same value for all nodes that we got a state from
-            int highestUpperCounter = leaderMergedCrdt.getUpperCounter().stream().max(Integer::compare).get();
             for (int i = 0; i < node.getNodesPorts().size(); i++) {
                 if (i == node.getOwnIndex() || statesReceivedFrom.contains(node.getNodesPorts().get(i))) {
                     leaderMergedCrdt.setUpper(i, highestUpperCounter);
@@ -752,10 +810,13 @@ public class MessageProcessor extends Thread {
      * Receive decrement message from client.
      */
     private void receiveDecrement(Message message) {
+        int ownResourcesLeft = node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex());
+
 
         // Out of resources: deny request straight away.
         // We need to double check if node is really out of resources
-        if (node.isOutOfResources() && node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex()) == 0) {
+        if (node.isOutOfResources() && node.getLimitedResourceCrdt().queryProcess(node.getNodesPorts().indexOf(node.getLeaderPort())) == 0
+                && node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex()) == 0) {
             logger.info("Out of resources. Cannot decrement counter.");
 
             // Notify client about unsuccessful decrement
@@ -763,8 +824,23 @@ public class MessageProcessor extends Thread {
             return;
         }
 
+        // Used for benchmarking. Run coordination phase for every resource.
+        // Only works if we do not request resources from the leader.
+        if (node.isCoordinateForEveryResource()) {
 
-        int ownResourcesLeft = node.getLimitedResourceCrdt().queryProcess(node.getOwnIndex());
+
+            if (ownResourcesLeft == 0) {
+                // We have no resources left. We need to ask the leader for every new lease.
+                requestLeases();
+                // Put message right back at the front of the queue, so it will be processed next.
+                node.operationMessageQueue.addFirst(message);
+            } else if (ownResourcesLeft > 0) {
+                node.getLimitedResourceCrdt().decrement(node.getOwnIndex());
+                // Notify client about successful decrement
+                messageHandler.send(MessageType.APPROVE_RES.getTitle(), message.getPort());
+            }
+            return;
+        }
 
         if (ownResourcesLeft == 0 && node.isFinalResources()) {
             // We are in final resource mode and have no resources assigned. We need to ask the leader for every new lease.
@@ -959,7 +1035,15 @@ public class MessageProcessor extends Thread {
 
 
         long timeToWait;
-        Function function;
+        QuorumMessageType messageType = null;
+        int roundNumber = -1 ;
+        Function function = null;
+
+        public WaitTimeTrigger(long timeToWait, QuorumMessageType messageType, int roundNumber) {
+            this.timeToWait = timeToWait;
+            this.messageType = messageType;
+            this.roundNumber = roundNumber;
+        }
 
         public WaitTimeTrigger(long timeToWait, Function function) {
             this.timeToWait = timeToWait;
@@ -973,13 +1057,21 @@ public class MessageProcessor extends Thread {
                 throw new RuntimeException(e);
             }
 
+            if (function != null) {
+                function.apply();
+            }
+
             // Trigger function
-            logger.debug("Triggering function after waiting for remaining time.");
-            function.apply();
+            logger.debug("Triggering function after waiting for remaining time for message type " + messageType + " and round number: " + roundNumber);
+            triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
         }
     }
 
     public void setLeaderMergedCrdt(LimitedResourceCrdt leaderMergedCrdt) {
         this.leaderMergedCrdt = leaderMergedCrdt;
+    }
+
+    public LimitedResourceCrdt getLeaderMergedCrdt() {
+        return leaderMergedCrdt;
     }
 }

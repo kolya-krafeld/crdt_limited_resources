@@ -29,6 +29,7 @@ public class Client extends Thread {
     private int resourcesRequested = 0;
     private int resourcesReceived = 0;
     private int resourcesDenied = 0;
+    private int totalResponses = 0;
 
     private Mode requestMode = Mode.RANDOM;
     private int numberOfRequest;
@@ -37,14 +38,23 @@ public class Client extends Thread {
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
 
+    private boolean printReceivedMessages = true;
+
+    // Wait object for synchronization
+    Object sharedObject = new Object();
+
     public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests) {
+        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080);
+    }
+
+    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort) {
         this.nodePorts = nodePorts;
         this.nodes = nodes;
         this.numberOfRequest = numberOfRequest;
         this.sleepTimeBetweenRequests = sleepTimeBetweenRequests;
 
         try {
-            this.socket = new DatagramSocket(8080);
+            this.socket = new DatagramSocket(clientPort);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -96,16 +106,21 @@ public class Client extends Thread {
 
 
         try {
-            Thread.sleep(sleepTimeBetweenRequests);
-            for (int i = 0; i < this.numberOfRequest; i++) {
-                requestResource();
-                incrementMonotonicCrdts();
-                Thread.sleep(sleepTimeBetweenRequests);
-            }
+//            Thread.sleep(sleepTimeBetweenRequests);
+//            for (int i = 0; i < this.numberOfRequest; i++) {
+//                requestResource();
+//                // incrementMonotonicCrdts();
+//                Thread.sleep(sleepTimeBetweenRequests);
+//            }
 
+            // Wait for message receiver to get response for all requests
+            synchronized(sharedObject) {
+                sharedObject.wait();
+            }
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+
     }
 
     public void stopProcesses() {
@@ -149,6 +164,8 @@ public class Client extends Thread {
         int indexOfNode = 0;
         if (requestMode == Mode.RANDOM) {
             indexOfNode = (int) (Math.random() * nodePorts.size());
+        } else if (requestMode == Mode.EXCLUDE_LEADER) {
+            indexOfNode = (int) (Math.random() * (nodePorts.size() - 1)) + 1;
         } else if (requestMode == Mode.ONLY_LEADER) {
             indexOfNode = 0;
         } else if (requestMode == Mode.ONLY_FOLLOWER) {
@@ -168,7 +185,8 @@ public class Client extends Thread {
     public enum Mode {
         RANDOM,
         ONLY_LEADER,
-        ONLY_FOLLOWER
+        ONLY_FOLLOWER,
+        EXCLUDE_LEADER
     }
 
     /**
@@ -225,13 +243,22 @@ public class Client extends Thread {
                     socket.receive(receivePacket);
 
                     String receivedMessage = new String(receivePacket.getData(), 0, receivePacket.getLength());
-                    System.out.println("Message from Node: " + receivedMessage);
+                    if (printReceivedMessages) System.out.println("Message from Node: " + receivedMessage);
                     Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
 
                     if (message.getType().equals(MessageType.DENY_RES)) {
                         resourcesDenied++;
+                        totalResponses++;
                     } else if (message.getType().equals(MessageType.APPROVE_RES)) {
                         resourcesReceived++;
+                        totalResponses++;
+                    }
+
+                    if (totalResponses == numberOfRequest) {
+                        // Notify waiting Client thread
+                        synchronized(sharedObject) {
+                            sharedObject.notify();
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -254,5 +281,9 @@ public class Client extends Thread {
 
     public int getResourcesDenied() {
         return resourcesDenied;
+    }
+
+    public void setPrintReceivedMessages(boolean printReceivedMessages) {
+        this.printReceivedMessages = printReceivedMessages;
     }
 }

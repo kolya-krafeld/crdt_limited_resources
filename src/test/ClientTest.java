@@ -1,5 +1,8 @@
-package main;
+package test;
 
+import main.Client;
+import main.Config;
+import main.Node;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -82,7 +85,7 @@ public class ClientTest {
     }
 
     @Test
-    public void testSystemWithLeaderHeaveLoad() {
+    public void testSystemWithHeaveLoadOnLeader() {
         int requestResources = 30;
         int additionalRequests = 10;
         int numberOfNodes = 3;
