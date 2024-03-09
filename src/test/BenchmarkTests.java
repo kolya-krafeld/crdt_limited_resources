@@ -25,45 +25,67 @@ import static org.junit.Assert.*;
  */
 public class BenchmarkTests {
 
+    private static final int NUMBER_OF_NODES = 5;
+
     @Test
-    public void testSystemRandomWorkload() throws UnknownHostException {
+    public void testSystemRandomWorkload() throws UnknownHostException, InterruptedException {
         int numberOfResources = 1 * 1000;
         int additionalRequests = (int) (numberOfResources * 0.01);
-        int numberOfNodes = 25;
+        int numberOfNodes = NUMBER_OF_NODES;
 
-        long runtimeSum = runTestIteration(numberOfNodes, numberOfResources, additionalRequests, 0,
-                false, Client.Mode.RANDOM);
+        long runtimeAverage = testSystemRandomWorkloadXTimes(numberOfResources, additionalRequests, numberOfNodes, 5);
 
-        System.out.println("Average time taken for testSystemWithRandomLoad: " + runtimeSum + "ms");
+        System.out.println("Average time taken for testSystemWithRandomLoad: " + runtimeAverage + "ms");
+
+    }
+
+
+
+    public long testSystemRandomWorkloadXTimes(int numberOfResources, int additionalRequests, int numberOfNodes, int numberOfIterations) throws UnknownHostException, InterruptedException {
+        long runtimeAverage = 0l;
+        for (int i = 0; i < numberOfIterations; i++) {
+            long runtimeSum = runTestIteration(numberOfNodes, numberOfResources, additionalRequests, i,
+                    false, Client.Mode.RANDOM);
+            System.out.println("Time taken for testSystemWithRandomLoad: " + runtimeSum + "ms");
+            runtimeAverage += runtimeSum;
+            Thread.sleep(8000);
+        }
+
+        return runtimeAverage / numberOfIterations;
+
     }
 
     @Test
     public void testSystemWorkloadHeavyNode() throws UnknownHostException {
         int numberOfResources = 1 * 1000;
         int additionalRequests = (int) (numberOfResources * 0.01);
-        int numberOfNodes = 25;
+        int numberOfNodes = NUMBER_OF_NODES;
 
         long runtimeSum = runTestIteration(numberOfNodes, numberOfResources, additionalRequests, 0,
                 false, Client.Mode.ONLY_FOLLOWER);
 
         System.out.println("Average time taken for testSystemWithRandomLoad: " + runtimeSum + "ms");
+
     }
+
+
 
     @Test
     public void testSystemWithCoordinationForEveryNode() throws UnknownHostException {
         int numberOfResources = 1 * 1000;
         int additionalRequests = (int) (numberOfResources * 0.01);
-        int numberOfNodes = 25;
+        int numberOfNodes = NUMBER_OF_NODES;
 
         long runtimeSum = runTestIteration(numberOfNodes, numberOfResources, additionalRequests, 0,
                 true, Client.Mode.EXCLUDE_LEADER);
 
         System.out.println("Average time taken for testSystemWithRandomLoad: " + runtimeSum + "ms");
+
     }
 
     private long runTestIteration(int numberOfNodes, int numberOfResources, int additionalRequests, int iteration, boolean coordinationOfEveryRequest, Client.Mode mode) throws UnknownHostException {
-        List<Node> nodes = new ArrayList<>();
         List<Integer> ports = new ArrayList<>();
+        List<Node> nodes = new ArrayList<>();
         setUpNodes(nodes, ports, numberOfNodes, numberOfResources, iteration, coordinationOfEveryRequest);
 
 
@@ -118,6 +140,10 @@ public class BenchmarkTests {
             client.stopProcesses();
         }
 
+        for (Node node : nodes) {
+            node.kill();
+        }
+
         return runtime;
     }
 
@@ -126,7 +152,7 @@ public class BenchmarkTests {
 
         // Set ports
         for (int i = 0; i < numberOfNodes; i++) {
-            ports.add(8000 + numberOfNodes * iteration + i);
+            ports.add(8001 + numberOfNodes * iteration + i);
         }
 
         // Create nodes

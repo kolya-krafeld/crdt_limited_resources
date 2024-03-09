@@ -56,6 +56,7 @@ public class MessageReceiver extends Thread {
 
                 if (message.getType() == null) {
                     logger.error("Message type is null");
+                    logger.error(message.toString());
                 }
 
                 //if message is for leader, but node is not the leader, forward the message to the leader

@@ -5,6 +5,8 @@ import main.utils.Logger;
 import main.utils.Message;
 import main.utils.MessageType;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -103,7 +105,21 @@ public class BallotLeaderElection {
                 this.node.leaderBallotNumber = maxCandidate.ballotNumber;
                 this.node.logger.info("LeaderElection: FOUND LEADER: ID " + maxCandidate.id + " with ballot number " + maxCandidate.ballotNumber);
                 String message = MessageType.ELECTION_RESULT.getTitle() + ":" + maxCandidate.id + "," + maxCandidate.ballotNumber;
-                node.messageHandler.broadcastIncludingSelf(message);
+                node.messageHandler.broadcast(message);
+                //if process elects itself as leader put message directly into message queue.
+                // This is necessary because some messages get lost while benchmarking with a high number of nodes and this message really shouldn't get lost
+                int oldLeader = this.node.getLeaderPort();
+                if (maxCandidate.id == this.node.getOwnPort() && oldLeader != this.node.getOwnPort()){
+                    InetAddress initAddress = null;
+                    try {
+                        initAddress = InetAddress.getByName("127.0.0.1");
+                    } catch (UnknownHostException e) {
+                        throw new RuntimeException(e);
+                    }
+                    this.node.heartbeatAndElectionMessageQueue.add(new Message(initAddress, this.node.getOwnPort(), message));
+                } else {
+                    this.node.setLeaderPort(maxCandidate.id);
+                }
                 return true;
             }
         }

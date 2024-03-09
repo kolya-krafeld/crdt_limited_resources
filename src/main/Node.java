@@ -26,7 +26,7 @@ import java.util.concurrent.*;
  */
 public class Node {
 
-    public Logger logger = new Logger(Logger.LogLevel.ERROR, this);
+    public Logger logger = new Logger(Logger.LogLevel.INFO, this);
 
     /**
      * Flag to indicate if the node should coordinate for every resource. Used for benchmarking.
