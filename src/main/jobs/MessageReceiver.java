@@ -60,7 +60,7 @@ public class MessageReceiver extends Thread {
                 }
 
                 //if message is for leader, but node is not the leader, forward the message to the leader
-                if(message.getType().isForLeaderMessage() && !node.isLeader()){
+                if(message.getType()!=null && message.getType().isForLeaderMessage() && !node.isLeader()){
                     logger.warn("Message is for leader, but this node is not the leader, forwarding message to the leader: " + node.getLeaderPort());
                     String forwardMessage = MessageType.FORWARDED_TO_LEADER + ":" + message;
                     node.messageHandler.sendToLeader(forwardMessage);

@@ -5,12 +5,18 @@ import main.Config;
 import main.Node;
 import main.utils.Message;
 import org.junit.Test;
-import org.junit.jupiter.api.RepeatedTest;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tests to benchmark the performance of the system.
@@ -36,6 +42,7 @@ public class BenchmarkTests {
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
+        writeTestResults("testSystemRandomWorkload", NUMBER_OF_NODES, NUMBER_OF_RESOURCES, runtimeAverage);
 
     }
 
@@ -47,6 +54,8 @@ public class BenchmarkTests {
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
+        writeTestResults("testSystemWorkloadHeavyNode", NUMBER_OF_NODES, NUMBER_OF_RESOURCES, runtimeAverage);
+
 
     }
 
@@ -58,6 +67,8 @@ public class BenchmarkTests {
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
+        writeTestResults("testSystemWithCoordinationForEveryNode", NUMBER_OF_NODES, NUMBER_OF_RESOURCES, runtimeAverage);
+
 
     }
 
@@ -166,6 +177,28 @@ public class BenchmarkTests {
             nodes.add(node);
             leaftoverResources--;
         }
+    }
+
+    public void writeTestResults(String testName, int numberOfNodes, int numberOfResources, long time) {
+        String data = numberOfNodes + ", " + numberOfResources + ", " + time;
+        String fileName = testName + ".txt";
+
+        try (FileWriter fw = new FileWriter(fileName, true);
+             PrintWriter pw = new PrintWriter(fw)) {
+            pw.println(data);
+            System.out.println("Successfully wrote data to file: " + fileName);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        AtomicInteger lineCount = new AtomicInteger();
+        try {
+            Files.lines(Paths.get(fileName)).forEach(line -> lineCount.incrementAndGet());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        System.out.println("Did " + testName + " now " + lineCount.get() + " times");
     }
 
 }
