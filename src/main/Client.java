@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -126,6 +127,8 @@ public class Client extends Thread {
     public void stopProcesses() {
         executor.shutdown();
         messageReceiver.interrupt();
+
+        socket.close();
     }
 
     public void incrementMonotonicCrdts() {
@@ -220,6 +223,8 @@ public class Client extends Thread {
     class StatePrinter implements Runnable {
 
         public void run() {
+            Set<Thread> threadSet = Thread.getAllStackTraces().keySet();
+            System.out.println("Number of current threads: " + threadSet.size());
             System.out.println("State: Resources requested: " + resourcesRequested + ", resources received: " + resourcesReceived + ", resources denied: " + resourcesDenied);
         }
     }
@@ -256,10 +261,14 @@ public class Client extends Thread {
 
                     if (totalResponses == numberOfRequest) {
                         // Notify waiting Client thread
-                        synchronized(sharedObject) {
+                        synchronized (sharedObject) {
                             sharedObject.notify();
                         }
                     }
+                }
+            } catch (SocketException se) {
+                if (!se.getMessage().equals("Socket closed")) {
+                    System.out.println("Socket exception in client: " + se.getMessage());
                 }
             } catch (IOException e) {
                 e.printStackTrace();

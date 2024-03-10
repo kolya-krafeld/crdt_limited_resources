@@ -47,7 +47,9 @@ public class MessageHandler {
             DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, port);
             socket.send(sendPacket);
         } catch (SocketException se) {
-            System.out.println(node.getOwnPort() + " Socket exception: " + se.getMessage());
+            if (!se.getMessage().equals("Socket closed")) {
+                System.out.println(node.getOwnPort() + " Socket exception: " + se.getMessage());
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

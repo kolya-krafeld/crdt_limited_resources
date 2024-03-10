@@ -92,7 +92,7 @@ public class MessageReceiver extends Thread {
             }
             }
         } catch (SocketException se) {
-            logger.error("Socket exception: " + se.getMessage());
+            logger.info("Socket exception: " + se.getMessage());
         } catch (IOException e) {
             e.printStackTrace();
         }

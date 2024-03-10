@@ -73,7 +73,7 @@ public class FailureDetector extends Thread {
             }
 
         } catch (InterruptedException e) {
-            logger.error("FailureDetector was interrupted!");
+            logger.info("FailureDetector was interrupted!");
         }
     }
 
