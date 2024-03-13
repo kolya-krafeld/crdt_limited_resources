@@ -32,9 +32,13 @@ public class Client extends Thread {
     private int resourcesDenied = 0;
     private int totalResponses = 0;
 
-    private Mode requestMode = Mode.RANDOM;
+    private MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
+
+    // Test or benchmark. In test mode send requests differently and can kill nodes.
+    private Mode mode;
     private int numberOfRequest;
     private int sleepTimeBetweenRequests;
+    private int delayBetweenKills;
 
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
@@ -44,15 +48,22 @@ public class Client extends Thread {
     // Wait object for synchronization
     Object sharedObject = new Object();
 
-    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests) {
-        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080);
+    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, Mode mode) {
+        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080, mode, 0);
     }
 
-    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort) {
+    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort,  Mode mode) {
+        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, clientPort, mode, 0);
+    }
+
+
+    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort, Mode mode, int delayBetweenKills) {
         this.nodePorts = nodePorts;
         this.nodes = nodes;
         this.numberOfRequest = numberOfRequest;
         this.sleepTimeBetweenRequests = sleepTimeBetweenRequests;
+        this.mode = mode;
+        this.delayBetweenKills = delayBetweenKills;
 
         try {
             this.socket = new DatagramSocket(clientPort);
@@ -89,7 +100,7 @@ public class Client extends Thread {
         //nodes.get(1).setAddMessageDelay(true);
         //nodes.get(2).setAddMessageDelay(true);
 
-        Client client = new Client(ports, nodes, 50, 1000);
+        Client client = new Client(ports, nodes, 50, 1000, Mode.TEST);
         client.start();
 
     }
@@ -97,25 +108,28 @@ public class Client extends Thread {
     public void run() {
         messageReceiver = new MessageReceiver();
         messageReceiver.start();
-
-        StatePrinter statePrinter = new StatePrinter();
-        NodeKiller nodeKiller = new NodeKiller();
         executor = Executors.newScheduledThreadPool(2);
-        //executor.scheduleAtFixedRate(resourceRequester, 2, 1, TimeUnit.SECONDS);
+        StatePrinter statePrinter = new StatePrinter();
         executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
-        //executor.scheduleAtFixedRate(nodeKiller, 6, 30, TimeUnit.SECONDS);
 
+        if (mode == Mode.TEST) {
+            if (this.delayBetweenKills > 0) {
+                NodeKiller nodeKiller = new NodeKiller();
+                executor.scheduleAtFixedRate(nodeKiller, 6, delayBetweenKills, TimeUnit.SECONDS);
+            }
+            for (int i = 0; i < this.numberOfRequest; i++) {
+                try {
+                    Thread.sleep(sleepTimeBetweenRequests);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                requestResource();
+            }
+        }
 
         try {
-//            Thread.sleep(sleepTimeBetweenRequests);
-//            for (int i = 0; i < this.numberOfRequest; i++) {
-//                requestResource();
-//                // incrementMonotonicCrdts();
-//                Thread.sleep(sleepTimeBetweenRequests);
-//            }
-
             // Wait for message receiver to get response for all requests
-            synchronized(sharedObject) {
+            synchronized (sharedObject) {
                 sharedObject.wait();
             }
         } catch (InterruptedException e) {
@@ -165,13 +179,13 @@ public class Client extends Thread {
     public void requestResource() {
         byte[] buf = "decrement".getBytes();
         int indexOfNode = 0;
-        if (requestMode == Mode.RANDOM) {
+        if (requestMode == MessageDistributionMode.RANDOM) {
             indexOfNode = (int) (Math.random() * nodePorts.size());
-        } else if (requestMode == Mode.EXCLUDE_LEADER) {
+        } else if (requestMode == MessageDistributionMode.EXCLUDE_LEADER) {
             indexOfNode = (int) (Math.random() * (nodePorts.size() - 1)) + 1;
-        } else if (requestMode == Mode.ONLY_LEADER) {
+        } else if (requestMode == MessageDistributionMode.ONLY_LEADER) {
             indexOfNode = 0;
-        } else if (requestMode == Mode.ONLY_FOLLOWER) {
+        } else if (requestMode == MessageDistributionMode.ONLY_FOLLOWER) {
             indexOfNode = 1;
         }
 
@@ -183,14 +197,22 @@ public class Client extends Thread {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+
+
     }
 
-    public enum Mode {
+    public enum MessageDistributionMode {
         RANDOM,
         ONLY_LEADER,
         ONLY_FOLLOWER,
         EXCLUDE_LEADER
     }
+
+    public enum Mode {
+        TEST,
+        BENCHMARK
+    }
+
 
     /**
      * Kills random node at specific interval.
@@ -259,7 +281,7 @@ public class Client extends Thread {
                         totalResponses++;
                     }
 
-                    if (totalResponses == numberOfRequest) {
+                    while (totalResponses == numberOfRequest) {
                         // Notify waiting Client thread
                         synchronized (sharedObject) {
                             sharedObject.notify();
@@ -276,7 +298,7 @@ public class Client extends Thread {
         }
     }
 
-    public void setRequestMode(Mode requestMode) {
+    public void setRequestMode(MessageDistributionMode requestMode) {
         this.requestMode = requestMode;
     }
 

@@ -38,7 +38,7 @@ public class BenchmarkTests {
     public void testSystemRandomWorkload() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.Mode.RANDOM, false);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.RANDOM, false);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -50,7 +50,7 @@ public class BenchmarkTests {
     public void testSystemWorkloadHeavyNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.Mode.ONLY_FOLLOWER, false);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.ONLY_FOLLOWER, false);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -63,7 +63,7 @@ public class BenchmarkTests {
     public void testSystemWithCoordinationForEveryNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.Mode.EXCLUDE_LEADER, true);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.EXCLUDE_LEADER, true);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -72,7 +72,7 @@ public class BenchmarkTests {
 
     }
 
-    public long testSystemXTimes(int numberOfResources, int additionalRequests, int numberOfNodes, int numberOfIterations, Client.Mode mode, boolean coordinationOfEveryRequest) throws UnknownHostException, InterruptedException {
+    public long testSystemXTimes(int numberOfResources, int additionalRequests, int numberOfNodes, int numberOfIterations, Client.MessageDistributionMode mode, boolean coordinationOfEveryRequest) throws UnknownHostException, InterruptedException {
         long runtimeAverage = 0l;
         for (int i = 0; i < numberOfIterations; i++) {
             System.out.println("Start new iteration: " + i);
@@ -87,35 +87,35 @@ public class BenchmarkTests {
 
     }
 
-    private long runTestIteration(int numberOfNodes, int numberOfResources, int additionalRequests, int iteration, boolean coordinationOfEveryRequest, Client.Mode mode) throws UnknownHostException {
+    private long runTestIteration(int numberOfNodes, int numberOfResources, int additionalRequests, int iteration, boolean coordinationOfEveryRequest, Client.MessageDistributionMode mode) throws UnknownHostException {
         List<Integer> ports = new ArrayList<>();
         List<Node> nodes = new ArrayList<>();
         setUpNodes(nodes, ports, numberOfNodes, numberOfResources, iteration, coordinationOfEveryRequest);
 
 
         Message message = new Message(InetAddress.getByName("localhost"), 5000 + iteration, "decrement");
-        if (mode == Client.Mode.ONLY_FOLLOWER) {
+        if (mode == Client.MessageDistributionMode.ONLY_FOLLOWER) {
             Node follower = nodes.get(1);
 
             for (int i = 0; i < numberOfResources + additionalRequests; i++) {
                 follower.operationMessageQueue.add(message);
             }
-        } else if (mode == Client.Mode.RANDOM) {
+        } else if (mode == Client.MessageDistributionMode.RANDOM) {
 
             for (int i = 0; i < numberOfResources + additionalRequests; i++) {
                 int indexOfNode = (int) (Math.random() * ports.size());
                 nodes.get(indexOfNode).operationMessageQueue.add(message);
             }
-        } else if (mode == Client.Mode.EXCLUDE_LEADER) {
+        } else if (mode == Client.MessageDistributionMode.EXCLUDE_LEADER) {
             for (int i = 0; i < numberOfResources + additionalRequests; i++) {
                 int indexOfNode = (int) (Math.random() * (ports.size() - 1)) + 1;
                 nodes.get(indexOfNode).operationMessageQueue.add(message);
             }
         }
 
-        Client client = new Client(ports, nodes, numberOfResources + additionalRequests, 0, 5000 + iteration);
+        Client client = new Client(ports, nodes, numberOfResources + additionalRequests, 0, 5000 + iteration, Client.Mode.BENCHMARK);
         client.setPrintReceivedMessages(false);
-        client.setRequestMode(Client.Mode.ONLY_FOLLOWER);
+        client.setRequestMode(Client.MessageDistributionMode.ONLY_FOLLOWER);
         long runtime = 0l;
         try {
             client.start();

@@ -1023,7 +1023,7 @@ public class MessageProcessor extends Thread {
      * @param function Function that is triggered after the delay. It is used to send the message.
      */
     private void delaysMessageSent(Function function) {
-        int delayInSeconds = 5;
+        int delayInSeconds = 2;
         WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(delayInSeconds * 1000, function);
         messageWaitTimeTrigger.start();
     }
