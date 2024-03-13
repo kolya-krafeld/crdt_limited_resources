@@ -1,5 +1,6 @@
-package main.crdt;
+package test.crdt;
 
+import main.crdt.ORSet;
 import org.junit.Test;
 
 import java.util.Set;

@@ -1,4 +1,4 @@
-package main.jobs;
+package test;
 
 import main.crdt.Crdt;
 import main.crdt.PNCounter;

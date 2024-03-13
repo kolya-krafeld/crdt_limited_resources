@@ -20,32 +20,61 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * Client class that sends requests to the system.
+ * Client class that sends requests to nodes in the system.
  */
 public class Client extends Thread {
 
+    /**
+     * Ports of nodes in the system.
+     */
     private final List<Integer> nodePorts;
+
+    /**
+     * List of nodes in the system.
+     */
     private final List<Node> nodes;
+
+    /**
+     * UDP socket for sending messages to and receiving messages from nodes.
+     */
     private final DatagramSocket socket;
+
+    // Counters for tracking number of resources requested, received and denied
     private int resourcesRequested = 0;
     private int resourcesReceived = 0;
     private int resourcesDenied = 0;
     private int totalResponses = 0;
 
+    /**
+     * Mode for sending requests to nodes. Random, only leader, only follower, exclude leader.
+     */
     private MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
 
     // Test or benchmark. In test mode send requests differently and can kill nodes.
     private Mode mode;
+    /**
+     * Number of requests to send to nodes.
+     */
     private int numberOfRequest;
+
+    /**
+     * Time to sleep between sending requests.
+     */
     private int sleepTimeBetweenRequests;
-    private int delayBetweenKills;
+
+    /**
+     * Time to sleep between killing nodes.
+     */
+    private int delayBetweenKills = 0;
 
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
 
     private boolean printReceivedMessages = true;
 
-    // Wait object for synchronization
+    /**
+     * Object for synchronization between threads.
+     */
     Object sharedObject = new Object();
 
     public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, Mode mode) {
@@ -100,7 +129,7 @@ public class Client extends Thread {
         //nodes.get(1).setAddMessageDelay(true);
         //nodes.get(2).setAddMessageDelay(true);
 
-        Client client = new Client(ports, nodes, 50, 1000, Mode.TEST);
+        Client client = new Client(ports, nodes, 50, 1000, Mode.NORMAL);
         client.start();
 
     }
@@ -110,24 +139,22 @@ public class Client extends Thread {
         messageReceiver.start();
         executor = Executors.newScheduledThreadPool(2);
         StatePrinter statePrinter = new StatePrinter();
-        executor.scheduleAtFixedRate(statePrinter, 10, 5, TimeUnit.SECONDS);
+        executor.scheduleAtFixedRate(statePrinter, 5, 5, TimeUnit.SECONDS);
 
-        if (mode == Mode.TEST) {
-            if (this.delayBetweenKills > 0) {
-                NodeKiller nodeKiller = new NodeKiller();
-                executor.scheduleAtFixedRate(nodeKiller, 6, delayBetweenKills, TimeUnit.SECONDS);
-            }
-            for (int i = 0; i < this.numberOfRequest; i++) {
-                try {
-                    Thread.sleep(sleepTimeBetweenRequests);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-                requestResource();
-            }
+        if (this.delayBetweenKills > 0) {
+            NodeKiller nodeKiller = new NodeKiller();
+            executor.scheduleAtFixedRate(nodeKiller, 6, delayBetweenKills, TimeUnit.SECONDS);
         }
 
         try {
+            for (int i = 0; i < this.numberOfRequest; i++) {
+                Thread.sleep(sleepTimeBetweenRequests);
+                requestLimitedResource();
+                if (mode == Mode.NORMAL) {
+                    updateMonotonicCrdts();
+                }
+            }
+
             // Wait for message receiver to get response for all requests
             synchronized (sharedObject) {
                 sharedObject.wait();
@@ -145,7 +172,10 @@ public class Client extends Thread {
         socket.close();
     }
 
-    public void incrementMonotonicCrdts() {
+    /**
+     * Method request random increment/decrement or add/remove on monotonic CRDTs with identifier 'counter' & 'set'.
+     */
+    public void updateMonotonicCrdts() {
         int indexOfNode = (int) (Math.random() * nodePorts.size());
         Node node = nodes.get(indexOfNode);
 
@@ -176,20 +206,29 @@ public class Client extends Thread {
         }
     }
 
-    public void requestResource() {
+    /**
+     * Method to request limited resource from node.
+     * Mode determines whether we send request to random node, the leader or specific follower.
+     */
+    public void requestLimitedResource() {
         byte[] buf = "decrement".getBytes();
         int indexOfNode = 0;
         if (requestMode == MessageDistributionMode.RANDOM) {
+            // Send request to random node
             indexOfNode = (int) (Math.random() * nodePorts.size());
         } else if (requestMode == MessageDistributionMode.EXCLUDE_LEADER) {
+            // Send request to random node, excluding the leader
             indexOfNode = (int) (Math.random() * (nodePorts.size() - 1)) + 1;
         } else if (requestMode == MessageDistributionMode.ONLY_LEADER) {
+            // Send request to leader (assuming leader is first node in list)
             indexOfNode = 0;
         } else if (requestMode == MessageDistributionMode.ONLY_FOLLOWER) {
+            // Send request to first follower node
             indexOfNode = 1;
         }
 
         try {
+            // Send udp request
             InetAddress ip = InetAddress.getByName("localhost");
             DatagramPacket sendPacket = new DatagramPacket(buf, buf.length, ip, nodePorts.get(indexOfNode));
             socket.send(sendPacket);
@@ -209,13 +248,14 @@ public class Client extends Thread {
     }
 
     public enum Mode {
+        NORMAL,
         TEST,
         BENCHMARK
     }
 
 
     /**
-     * Kills random node at specific interval.
+     * Thread that kills random node at specific interval.
      */
     class NodeKiller extends Thread {
 
@@ -240,7 +280,7 @@ public class Client extends Thread {
     }
 
     /**
-     * Prints state of Client
+     * Thread that periodically prints state of Client
      */
     class StatePrinter implements Runnable {
 
@@ -252,7 +292,7 @@ public class Client extends Thread {
     }
 
     /**
-     * Thread responsible for receiving messages from other node
+     * Thread responsible for receiving messages from nodes
      */
     class MessageReceiver extends Thread {
 

@@ -1,5 +1,8 @@
 package main.utils;
 
+/**
+ * Logical clock for ordering events in a distributed system.
+ */
 public class LogicalClock {
     private int time;
 

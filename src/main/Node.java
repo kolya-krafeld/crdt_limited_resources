@@ -21,25 +21,24 @@ import java.util.concurrent.*;
 
 
 /**
- * Node in the network. Connects to other nodes and clients.
- * Responsible for its own CRDT.
+ * Node/server in the distributed system.
+ * Handles incoming client requests and cooperates with other nodes in the system.
+ *
+ * Node holds own copy of:
+ * - One LimitedResourceCrdt
+ * - Several Monotonic CRDTs
  */
 public class Node {
 
     public Logger logger = new Logger(Logger.LogLevel.DEBUG, this);
 
     /**
-     * Flag to indicate if the node should coordinate for every resource. Used for benchmarking.
-     */
-    private boolean coordinateForEveryResource = false;
-
-    /**
-     * CRDT that only allows access to limited ressources.
+     * CRDT that manages limited resources.
      */
     private LimitedResourceCrdt limitedResourceCrdt;
 
     /**
-     * Map of all monotonic CRDTs. Maps a unique identifier to a CRDT.
+     * Map of all monotonic CRDTs. Maps a unique identifier to a monotonic CRDT.
      */
     private Map<String, Crdt> monotonicCrdts = new HashMap<>();
 
@@ -54,16 +53,18 @@ public class Node {
     public DatagramSocket socket;
 
     /**
-     * Utils object that handels sending messages.
+     * Utils object that handles message sending.
      */
     public final MessageHandler messageHandler;
+
     /**
      * Flag to indicate if the node is currently in lease coordination phase.
      */
     boolean inCoordinationPhase = false;
 
     /**
-     * Flag to indicate if the node is currently in restart phase. To get out of this phase, the node needs to receive a <decide> or <accept-sync> message.
+     * Flag to indicate if the node is currently in restart phase.
+     * To get out of this phase, the node needs to receive a <decide> or <accept-sync> message.
      */
     boolean inRestartPhase = false;
 
@@ -86,6 +87,10 @@ public class Node {
      *Is set when node was leader and missed the election and itself is not the leader anymore.
      */
     public boolean isSearchingForLeader = false;
+
+    // -----------------------------------------------
+    // ----------------- MESSAGE QUEUES --------------
+    // -----------------------------------------------
 
     /**
      * Queue of merge messages for monotonic CRDTs.
@@ -124,10 +129,11 @@ public class Node {
      */
     public Map<Integer, Integer[]> findLeaderAnswers = new HashMap<>();
 
-    private int ownPort;
 
+    private int ownPort;
     private int leaderPort = -1;
     public int leaderBallotNumber = 0;
+
     /**
      * Own ballot number of the node
      */
@@ -138,6 +144,7 @@ public class Node {
      * Index of the node in the network.
      */
     private int ownIndex;
+
     /**
      * List of all ports of the nodes in the network.
      */
@@ -172,6 +179,11 @@ public class Node {
      * Flag used for testing. If set to true, the node will add a delay to every message it sends.
      */
     private boolean addMessageDelay = false;
+
+    /**
+     * Flag to indicate if the node should coordinate for every resource. Used for benchmarking.
+     */
+    private boolean coordinateForEveryResource = false;
 
     // JOBS
     private MessageReceiver messageReceiver;
@@ -255,7 +267,6 @@ public class Node {
         executor.shutdown();
 
         socket.close();
-
     }
 
     /**
@@ -293,12 +304,8 @@ public class Node {
         failureDetector.start();
     }
 
-    public synchronized int getTime() {
-        return this.logicalClock.getTime();
-    }
-
     public void startLeaderElection() {
-        //maybe we have to set inCoordinationPhase = true, but as leaderElection happens on another layer, it should work
+        // maybe we have to set inCoordinationPhase = true, but as leaderElection happens on another layer, it should work
         this.ballotLeaderElection.start();
     }
 
@@ -327,8 +334,9 @@ public class Node {
         monotonicCrdts.put(identifier, orSet);
     }
 
-    // GETTERS & SETTERS
-
+    // -----------------------------------------------
+    // ----------------- GETTERS & SETTERS -----------
+    // -----------------------------------------------
     public LimitedResourceCrdt getLimitedResourceCrdt() {
         return limitedResourceCrdt;
     }
@@ -395,6 +403,10 @@ public class Node {
 
     public List<Integer> getNodesPorts() {
         return nodesPorts;
+    }
+
+    public synchronized int getTime() {
+        return this.logicalClock.getTime();
     }
 
     public int getLeaderPort() {

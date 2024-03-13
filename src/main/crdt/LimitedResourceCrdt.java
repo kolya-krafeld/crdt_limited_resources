@@ -4,6 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * CRDT managing a limited resource.
+ * Supports incrementing and decrementing the resource count.
+ */
 public class LimitedResourceCrdt implements Crdt {
     int numberOfProcesses;
 

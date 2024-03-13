@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Tests to benchmark the performance of the system.
  * Run benchmarks for 3,5,10 nodes respectively.
- * Run benchmarks for 1,000, 10,000, 100,000 resources. Make 10% calls than resources available.
+ * Run benchmarks for 1,000, 10,000, 100,000 resources.
+ * Make 1% calls than resources available to check that we do not get more resources than available.
  *
  * Run tests for the following 3 systems:
  * 1. Limited Resource CRDTS with workload spread across all nodes randomly.
@@ -30,10 +31,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class BenchmarkTests {
 
-    private static final int NUMBER_OF_NODES = 10;
+    private static final int NUMBER_OF_NODES = 3;
     private static final int NUMBER_OF_RESOURCES = 1 * 1000;
     private static final int NUMBER_OF_ITERATIONS = 1;
 
+    /**
+     * Benchmark test for limited resource CRDT with random workload spread across all nodes.
+     * Best case scenario.
+     */
     @Test
     public void testSystemRandomWorkload() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
@@ -46,6 +51,11 @@ public class BenchmarkTests {
 
     }
 
+    /**
+     * Benchmark test for limited resource CRDT with workload focused on one node.
+     * Send all requests from a single node.
+     * Worst case in terms of performance.
+     */
     @Test
     public void testSystemWorkloadHeavyNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
@@ -59,6 +69,9 @@ public class BenchmarkTests {
 
     }
 
+    /**
+     * Benchmark test for limited resource CRDT with coordination for every single request.
+     */
     @Test
     public void testSystemWithCoordinationForEveryNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
@@ -68,10 +81,11 @@ public class BenchmarkTests {
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
         writeTestResults("testSystemWithCoordinationForEveryNode", NUMBER_OF_NODES, NUMBER_OF_RESOURCES, runtimeAverage);
-
-
     }
 
+    /**
+     * Runs benchmark test x times and returns the average runtime of all iterations.
+     */
     public long testSystemXTimes(int numberOfResources, int additionalRequests, int numberOfNodes, int numberOfIterations, Client.MessageDistributionMode mode, boolean coordinationOfEveryRequest) throws UnknownHostException, InterruptedException {
         long runtimeAverage = 0l;
         for (int i = 0; i < numberOfIterations; i++) {
@@ -87,6 +101,11 @@ public class BenchmarkTests {
 
     }
 
+
+    /**
+     * Run a single iteration of the benchmark test.
+     * Add messages directly to the operationMessageQueue of the nodes to avoid lost UDP messages.
+     */
     private long runTestIteration(int numberOfNodes, int numberOfResources, int additionalRequests, int iteration, boolean coordinationOfEveryRequest, Client.MessageDistributionMode mode) throws UnknownHostException {
         List<Integer> ports = new ArrayList<>();
         List<Node> nodes = new ArrayList<>();
@@ -130,13 +149,10 @@ public class BenchmarkTests {
 
 
             runtime = endTime - startTime;
-            System.out.println("Time taken for testSystemWithRandomLoad: " + runtime + "ms");
+            System.out.println("Time taken for iteration: " + runtime + "ms");
 
             System.out.println("Resources requested: " + (numberOfResources + additionalRequests)  + " Resources received: " + client.getResourcesReceived() + " Resources denied: " + client.getResourcesDenied());
             System.out.println("Limited resource CRDT end state:" + nodes.get(0).getLimitedResourceCrdt());
-
-            //assertEquals("Should get all requested resources", numberOfResources, client.getResourcesReceived());
-            //assertEquals("Additional requests should be denied", additionalRequests, client.getResourcesDenied());
 
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
@@ -152,6 +168,9 @@ public class BenchmarkTests {
         return runtime;
     }
 
+    /**
+     * Set up nodes for the benchmark test iteration.
+     */
     private void setUpNodes(List<Node> nodes, List<Integer> ports, int numberOfNodes, int requestResources, int iteration, boolean coordinationOfEveryRequest) {
         Config config = new Config(100, 5, 2, 5);
 
@@ -179,9 +198,12 @@ public class BenchmarkTests {
         }
     }
 
+    /**
+     * Appends test result of iteration to local file.
+     */
     public void writeTestResults(String testName, int numberOfNodes, int numberOfResources, long time) {
         String data = numberOfNodes + ", " + numberOfResources + ", " + time;
-        String fileName = testName + ".txt";
+        String fileName = "./benchmark_results/" + testName + ".txt";
 
         try (FileWriter fw = new FileWriter(fileName, true);
              PrintWriter pw = new PrintWriter(fw)) {
@@ -198,7 +220,6 @@ public class BenchmarkTests {
             e.printStackTrace();
         }
 
-        System.out.println("Did " + testName + " now " + lineCount.get() + " times");
+        System.out.println("Ran " + testName + " " + lineCount.get() + " times");
     }
-
 }

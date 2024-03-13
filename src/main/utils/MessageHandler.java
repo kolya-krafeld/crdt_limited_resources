@@ -8,7 +8,6 @@ import java.util.List;
 
 import static java.util.Collections.emptyList;
 
-
 /**
  * Class responsible for sending messages to other nodes or clients.
  * Provides send and broadcast methods.

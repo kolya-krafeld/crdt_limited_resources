@@ -5,6 +5,9 @@ import java.net.UnknownHostException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Message class for sending messages between nodes.
+ */
 public class Message {
 
     private InetAddress address;

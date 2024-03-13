@@ -65,6 +65,9 @@ public class ORSet<E> implements Crdt {
 
     }
 
+    /**
+     * Returns the set of elements that are in the ESet but not in the TSet.
+     */
     public Set<E> query() {
         Set<E> result = new HashSet<>();
 
