@@ -1059,11 +1059,12 @@ public class MessageProcessor extends Thread {
 
             if (function != null) {
                 function.apply();
-            }
+            } else {
 
-            // Trigger function
-            logger.debug("Triggering function after waiting for remaining time for message type " + messageType + " and round number: " + roundNumber);
-            triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
+                // Trigger function
+                logger.debug("Triggering function after waiting for remaining time for message type " + messageType + " and round number: " + roundNumber);
+                triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
+            }
         }
     }
 
