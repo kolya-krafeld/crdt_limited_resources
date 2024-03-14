@@ -53,11 +53,11 @@ class MessageProcessorTest {
         leaderCrdt.setLower(1, 998);
         leaderCrdt.setLower(2, 998);
         assertEquals("[1000;999;998],[998;998;998]", leaderCrdt.toString());
-        assertEquals(3, leaderCrdt.query());
+        assertEquals(3, (int) leaderCrdt.query());
         messageProcessor.setLeaderMergedCrdt(leaderCrdt);
         messageProcessor.reassignLeases();
         assertEquals("[1001;1001;1001],[1000;1000;1000]", messageProcessor.getLeaderMergedCrdt().toString());
-        assertEquals(3, messageProcessor.getLeaderMergedCrdt().query());
+        assertEquals(3, (int) messageProcessor.getLeaderMergedCrdt().query());
     }
 
 }

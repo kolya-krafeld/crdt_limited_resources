@@ -8,11 +8,12 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-/*
-Tests different behaviors of the system with different loads and node failures
-Tests have to be run one by one, as they are using the same ports and nodes are not getting closed immediately
+/**
+ * Tests different behaviors of the system with different loads and node failures
+ * Tests have to be run one by one, as they are using the same ports and nodes are not getting closed immediately
  */
 public class SystemTests {
 
@@ -35,9 +36,9 @@ public class SystemTests {
         }
     }
 
-    /*
-    sending requests to all nodes, randomly split
-    in this test requests are send automatically from the client
+    /**
+     * sending requests to all nodes, randomly split
+     *  in this test requests are send automatically from the client
      */
     @Test
     public void testSystemWithRandomLoad() {
@@ -65,9 +66,9 @@ public class SystemTests {
         }
     }
 
-    /*
-    sending requests only to one node
-    in this test requests are send automatically from the client
+    /**
+     * sending requests only to one node
+     * in this test requests are send automatically from the client
      */
     @Test
     public void testSystemWithNodeHeaveLoad() {
@@ -96,9 +97,9 @@ public class SystemTests {
         }
     }
 
-    /*
-    sending requests only to the leader
-    in this test requests are send automatically from the client
+    /**
+     * sending requests only to the leader
+     * in this test requests are send automatically from the client
      */
     @Test
     public void testSystemWithHeaveLoadOnLeader() {
@@ -110,7 +111,7 @@ public class SystemTests {
         List<Integer> ports = new ArrayList<>();
         setUpNodes(nodes, ports, numberOfNodes, requestResources);
 
-        Client client = new Client(ports, nodes, requestResources + additionalRequests, 10,Client.Mode.TEST);
+        Client client = new Client(ports, nodes, requestResources + additionalRequests, 10, Client.Mode.TEST);
         client.setRequestMode(Client.MessageDistributionMode.ONLY_LEADER);
         try {
             client.start();
@@ -127,9 +128,9 @@ public class SystemTests {
         }
     }
 
-    /*
-    kills follower node with restarting
-    in this test requests are send manually
+    /**
+     * kills follower node with restarting
+     * in this test requests are send manually
      */
     @Test
     public void testKillFollowerWithRestart() {
@@ -150,7 +151,7 @@ public class SystemTests {
             assertEquals("Should get the same amount of resources as requested", 4, client.getResourcesReceived());
             nodes.get(1).kill(); //Node 1 should have 3 leases, so one is lost
             //try to get more resources
-            for (int i=0; i<5; i++) {
+            for (int i = 0; i < 5; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);
@@ -159,7 +160,7 @@ public class SystemTests {
             assertEquals("One from the total 9 leases is hold by dead Node 1", 8, client.getResourcesReceived());
             nodes.get(1).restart();
             Thread.sleep(1000); //give node time to restart and sync with the leader
-            for (int i=0; i<2; i++) {
+            for (int i = 0; i < 2; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);
@@ -173,9 +174,9 @@ public class SystemTests {
         }
     }
 
-    /*
-    kills leader node with restarting
-    in this test requests are send manually
+    /**
+     * kills leader node with restarting
+     * in this test requests are send manually
      */
     @Test
     public void testKillLeaderWithRestarting() {
@@ -194,15 +195,15 @@ public class SystemTests {
             client.requestLimitedResource(1);
             client.requestLimitedResource(2);
             client.requestLimitedResource(2);
-            Thread.sleep(500); //give nodes time to answer to requests
+            Thread.sleep(500); // give nodes time to answer to requests
             assertEquals("Expect", 6, client.getResourcesReceived());
-            nodes.get(0).kill(); //Node 0 should have 3 leases, so one is lost, as this node is the leader, the leader election gets started
-            Thread.sleep(2000); //give nodes time to detect dead leader and elect a new one
-            if(!nodes.get(1).isLeader() && !nodes.get(2).isLeader()){
+            nodes.get(0).kill(); // Node 0 should have 3 leases, so one is lost, as this node is the leader, the leader election gets started
+            Thread.sleep(2000); // give nodes time to detect dead leader and elect a new one
+            if (!nodes.get(1).isLeader() && !nodes.get(2).isLeader()) {
                 assertTrue("We must have a new leader by now", nodes.get(1).isLeader() || nodes.get(2).isLeader());
             }
             //try to get more resources
-            for (int i=0; i<5; i++) {
+            for (int i = 0; i < 5; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);
@@ -211,7 +212,7 @@ public class SystemTests {
             assertEquals("One from the total 9 leases is hold by dead Node 0", 8, client.getResourcesReceived());
             nodes.get(0).restart();
             Thread.sleep(1000); //give node time to restart and sync with the new leader
-            for (int i=0; i<2; i++) {
+            for (int i = 0; i < 2; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);
@@ -232,12 +233,12 @@ public class SystemTests {
         }
     }
 
-/*
-    every node takes 5 seconds to answer to coordination messages
-    this means they arrive after the coordination phase has finished
-    the system should work nonetheless
-    in this test requests are send manually
- */
+    /**
+     * every node takes 5 seconds to answer to coordination messages
+     * this means they arrive after the coordination phase has finished
+     * the system should work nonetheless
+     * in this test requests are send manually
+     */
     @Test
     public void testDelayStateUntilAfterCoordinationPhase() {
         int requestResources = 15;
@@ -255,19 +256,19 @@ public class SystemTests {
         try {
             client.start();
             //every node has 3 resources, trigger the coordination phase with sending 5 requests to node 1
-            for (int i=0; i<5; i++) {
+            for (int i = 0; i < 5; i++) {
                 client.requestLimitedResource(1);
             }
             //node 1 starts coordinating phase, but the messages are delayed by 5 seconds
             //try to get more resources in the meantime
-            for (int i=0; i<5; i++) {
+            for (int i = 0; i < 5; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);
             }
             Thread.sleep(10000); //give nodes time to answer to requests, this long because coordination messages are delayed by 5 seconds
             //try to get more resources
-            for (int i=0; i<5; i++) {
+            for (int i = 0; i < 5; i++) {
                 client.requestLimitedResource(0);
                 client.requestLimitedResource(1);
                 client.requestLimitedResource(2);

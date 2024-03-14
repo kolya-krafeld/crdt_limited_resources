@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
  * CRDT managing a limited resource.
  * Supports incrementing and decrementing the resource count.
  */
-public class LimitedResourceCrdt implements Crdt {
+public class LimitedResourceCrdt implements Crdt<Integer> {
     int numberOfProcesses;
 
     private List<Integer> upperCounter = new ArrayList<>();
@@ -46,7 +46,7 @@ public class LimitedResourceCrdt implements Crdt {
     /**
      * Return the number of resources that are still left across all processes.
      */
-    public int query() {
+    public Integer query() {
         int sum = 0;
         for (int i = 0; i < numberOfProcesses; i++) {
             sum += upperCounter.get(i) - lowerCounter.get(i);

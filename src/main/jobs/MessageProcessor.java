@@ -272,6 +272,9 @@ public class MessageProcessor extends Thread {
             maxRoundNumberInPreparePhase = Math.max(maxRoundNumberInPreparePhase, roundNumber);
 
             LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
+            if (leaderMergedCrdt == null) {
+                leaderMergedCrdt = node.getLimitedResourceCrdt();
+            }
             leaderMergedCrdt.merge(state);
             statesReceivedFrom.add(message.getPort());
 
@@ -466,7 +469,7 @@ public class MessageProcessor extends Thread {
 
             LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
             leaderMergedCrdt.merge(state);
-            logger.info("Merged state CRDT: " + state + " to " + leaderMergedCrdt.toString());
+            logger.debug("Merged state CRDT: " + state + " to " + leaderMergedCrdt.toString());
             statesReceivedFrom.add(message.getPort());
 
             triggerNextCoordinationStateWhenReady(statesReceivedFrom.size(), lastRequestStateSent, QuorumMessageType.STATE, roundNumber);
@@ -676,7 +679,7 @@ public class MessageProcessor extends Thread {
             node.setInRestartPhase(false); // End of restart phase, if we were in it
         }
 
-        logger.info("Received decided state: " + message.getContent());
+        logger.debug("Received decided state: " + message.getContent());
         node.setInCoordinationPhase(false); // End of coordination phase
     }
 
@@ -724,7 +727,7 @@ public class MessageProcessor extends Thread {
             }
         }
 
-        logger.info("Available resources: " + availableResources);
+        logger.info("AVAILABLE RESOURCES: " + availableResources);
 
         if (node.isCoordinateForEveryResource()) {
             if (availableResources > 0) {

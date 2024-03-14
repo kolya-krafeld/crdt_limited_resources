@@ -30,7 +30,7 @@ import java.util.concurrent.*;
  */
 public class Node {
 
-    public Logger logger = new Logger(Logger.LogLevel.DEBUG, this);
+    public Logger logger = new Logger(Logger.LogLevel.INFO, this);
 
     /**
      * CRDT that manages limited resources.

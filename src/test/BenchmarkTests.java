@@ -31,8 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class BenchmarkTests {
 
-    private static final int NUMBER_OF_NODES = 3;
-    private static final int NUMBER_OF_RESOURCES = 1 * 1000;
+    private static final int NUMBER_OF_NODES = 5;
+    private static final int NUMBER_OF_RESOURCES = 10 * 1000;
     private static final int NUMBER_OF_ITERATIONS = 1;
 
     /**

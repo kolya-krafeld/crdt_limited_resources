@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
  * Positive-Negative Counter CRDT.
  * Supports increment and decrement operations.
  */
-public class PNCounter implements Crdt {
+public class PNCounter implements Crdt<Integer> {
 
     int numberOfProcesses;
 
@@ -47,7 +47,7 @@ public class PNCounter implements Crdt {
     /**
      * Queries the total counter value.
      */
-    public int query() {
+    public Integer query() {
         int sum = 0;
         for (int i = 0; i < numberOfProcesses; i++) {
             sum += inc.get(i) - dec.get(i);
