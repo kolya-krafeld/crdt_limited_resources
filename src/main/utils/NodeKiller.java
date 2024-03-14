@@ -3,46 +3,62 @@ package main.utils;
 
 import main.Node;
 
-import java.util.ArrayList;
 import java.util.List;
 
-//just for testing
+/**
+ * Class responsible for killing nodes in the network.
+ * Provides methods to kill a random follower, a single follower or the leader.
+ */
 public class NodeKiller extends Thread {
-    int targetIndex;
-    boolean revive;
-    int reviveTime= 0;
-    public int killTime=0;
-    List<Node> nodes = new ArrayList<>();
 
-
-    public NodeKiller (int targetIndex, int killTime, List<Node> nodes){
-        this(targetIndex, killTime, nodes, false, 0);
+    public enum NodeKillerType {
+        RANDOM, RANDOM_FOLLOWER, SINGLE_FOLLOWER, LEADER
     }
 
-    public NodeKiller(int targetIndex, int killTime, List<Node> nodes,   boolean revive, int reviveTime) {
-        this.targetIndex = targetIndex;
+    boolean revive;
+    int reviveTime;
+    List<Node> nodes;
+    NodeKillerType type;
+
+    public NodeKiller(NodeKillerType type, List<Node> nodes, boolean revive, int reviveTime) {
         this.revive = revive;
         this.reviveTime = reviveTime;
-        this.killTime = killTime;
         this.nodes = nodes;
+        this.type = type;
     }
 
     public void run() {
-        Node target = nodes.get(targetIndex);
         try {
-            Thread.sleep(killTime);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-        System.out.println("Killing node: " + target.getOwnPort());
-        target.kill();
-        if(revive) {
-            try {
-                Thread.sleep(reviveTime);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+            Node target;
+            switch (type) {
+                case RANDOM:
+                    target = nodes.get((int) (Math.random() * nodes.size()));
+                    break;
+                case RANDOM_FOLLOWER:
+                    target = nodes.get((int) (Math.random() * (nodes.size() - 1)) + 1);
+                    break;
+                case SINGLE_FOLLOWER:
+                    // Kill first follower in network
+                    target = nodes.get(1);
+                    break;
+                case LEADER:
+                    target = nodes.stream().filter(Node::isLeader).findFirst().get();
+                    break;
+                default:
+                    throw new RuntimeException("Invalid type");
             }
-            target.restart();
+            System.out.println("Killing node: " + target.getOwnPort());
+            target.kill();
+            if (revive) {
+                try {
+                    Thread.sleep(reviveTime);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                target.restart(false);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }

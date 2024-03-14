@@ -5,6 +5,7 @@ import main.crdt.ORSet;
 import main.crdt.PNCounter;
 import main.utils.Message;
 import main.utils.MessageType;
+import main.utils.NodeKiller;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -13,6 +14,7 @@ import java.net.InetAddress;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -38,6 +40,10 @@ public class Client extends Thread {
      * UDP socket for sending messages to and receiving messages from nodes.
      */
     private final DatagramSocket socket;
+    /**
+     * Object for synchronization between threads.
+     */
+    Object sharedObject = new Object();
 
     // Counters for tracking number of resources requested, received and denied
     private int resourcesRequested = 0;
@@ -50,30 +56,27 @@ public class Client extends Thread {
      */
     private MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
 
-    // Test or benchmark. In test mode send requests differently and can kill nodes.
+    /**
+     * Mode for client. Normal, test, benchmark.
+     */
     private Mode mode;
+
     /**
      * Number of requests to send to nodes.
      */
     private int numberOfRequest;
-
     /**
      * Time to sleep between sending requests.
      */
     private int sleepTimeBetweenRequests;
-
     /**
      * Time to sleep between killing nodes.
      */
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
-
     private boolean printReceivedMessages = true;
-
-    /**
-     * Object for synchronization between threads.
-     */
-    Object sharedObject = new Object();
+    private boolean killNodes = false;
+    private NodeKiller.NodeKillerType nodeKillerType = NodeKiller.NodeKillerType.SINGLE_FOLLOWER;
 
     public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, Mode mode) {
         this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080, mode);
@@ -98,8 +101,16 @@ public class Client extends Thread {
 
 
     public static void main(String[] args) throws Exception {
-        Config config = new Config(100, 5, 2, 5);
         int numberOfNodes = 3;
+        int numberOfResourcesPerNode = 10;
+        int numberOfRequests = 100;
+        boolean addMessageDelay = false;
+        boolean killNodes = false;
+        int messageRequestDelay = 750;
+        MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
+
+
+        Config config = new Config(100, 5, 2, 5);
         List<Integer> ports = new ArrayList<>();
         // Set ports
         for (int i = 0; i < numberOfNodes; i++) {
@@ -111,47 +122,60 @@ public class Client extends Thread {
         Node node;
         for (int i = 0; i < numberOfNodes; i++) {
             node = new Node(ports.get(i), ports, config);
-            node.getLimitedResourceCrdt().setUpper(i, 10);
+            node.getLimitedResourceCrdt().setUpper(i, numberOfResourcesPerNode);
             node.setLeaderPort(ports.get(0));
             node.init(true);
             nodes.add(node);
         }
 
+        // Add monotonic CRDTs to nodes
         nodes.get(0).addPNCounterCrdt("counter");
         nodes.get(0).addORSetCrdt("set");
 
         // Delay coordination messages from this node
-        //nodes.get(1).setAddMessageDelay(true);
-        //nodes.get(2).setAddMessageDelay(true);
+        if (addMessageDelay) {
+            nodes.get(1).setAddMessageDelay(true);
+            nodes.get(2).setAddMessageDelay(true);
+        }
 
-        Client client = new Client(ports, nodes, 50, 1000, Mode.NORMAL);
+
+        Client client = new Client(ports, nodes, numberOfRequests, messageRequestDelay, Mode.NORMAL);
+        client.setRequestMode(requestMode);
+        if (killNodes) {
+            client.setKillNodes(killNodes);
+            client.setNodeKillerType(NodeKiller.NodeKillerType.RANDOM);
+        }
         client.start();
-
     }
 
     public void run() {
         messageReceiver = new MessageReceiver();
         messageReceiver.start();
-        executor = Executors.newScheduledThreadPool(2);
+        executor = Executors.newScheduledThreadPool(3);
         StatePrinter statePrinter = new StatePrinter();
         executor.scheduleAtFixedRate(statePrinter, 5, 5, TimeUnit.SECONDS);
 
-        if (mode == Mode.TEST) {
-            if (requestMode != MessageDistributionMode.SPECIFIC_NODES) {
-                for (int i = 0; i < this.numberOfRequest; i++) {
-                    try {
+        if (killNodes) {
+            // Kill nodes every 5 seconds
+            NodeKiller nodeKiller = new NodeKiller(nodeKillerType, nodes, true, 2000);
+            executor.scheduleAtFixedRate(nodeKiller, 5, 8, TimeUnit.SECONDS);
+        }
+
+        try {
+            if (mode == Mode.TEST) {
+                if (requestMode != MessageDistributionMode.SPECIFIC_NODES) {
+                    for (int i = 0; i < this.numberOfRequest; i++) {
                         Thread.sleep(sleepTimeBetweenRequests);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    requestLimitedResource();
-                    if (mode == Mode.NORMAL) {
-                        updateMonotonicCrdts();
+                        requestLimitedResource();
                     }
                 }
+            } else if (mode == Mode.NORMAL) {
+                for (int i = 0; i < this.numberOfRequest; i++) {
+                    Thread.sleep(sleepTimeBetweenRequests);
+                    updateMonotonicCrdts();
+                    requestLimitedResource();
+                }
             }
-        }
-        try {
             // Wait for message receiver to get response for all requests
             synchronized (sharedObject) {
                 sharedObject.wait();
@@ -219,7 +243,7 @@ public class Client extends Thread {
         } else if (requestMode == MessageDistributionMode.ONLY_LEADER) {
             // Send request to leader (assuming leader is first node in list)
             indexOfNode = 0;
-        } else if (requestMode == MessageDistributionMode.ONLY_FOLLOWER) {
+        } else if (requestMode == MessageDistributionMode.SINGLE_FOLLOWER) {
             // Send request to first follower node
             indexOfNode = 1;
         } else if (requestMode == MessageDistributionMode.SPECIFIC_NODES) {
@@ -241,10 +265,38 @@ public class Client extends Thread {
         requestLimitedResource(-1);
     }
 
+    public void setRequestMode(MessageDistributionMode requestMode) {
+        this.requestMode = requestMode;
+    }
+
+    public int getResourcesRequested() {
+        return resourcesRequested;
+    }
+
+    public int getResourcesReceived() {
+        return resourcesReceived;
+    }
+
+    public int getResourcesDenied() {
+        return resourcesDenied;
+    }
+
+    public void setKillNodes(boolean killNodes) {
+        this.killNodes = killNodes;
+    }
+
+    public void setNodeKillerType(NodeKiller.NodeKillerType nodeKillerType) {
+        this.nodeKillerType = nodeKillerType;
+    }
+
+    public void setPrintReceivedMessages(boolean printReceivedMessages) {
+        this.printReceivedMessages = printReceivedMessages;
+    }
+
     public enum MessageDistributionMode {
         RANDOM,
         ONLY_LEADER,
-        ONLY_FOLLOWER,
+        SINGLE_FOLLOWER,
         EXCLUDE_LEADER,
         SPECIFIC_NODES
     }
@@ -261,9 +313,15 @@ public class Client extends Thread {
     class StatePrinter implements Runnable {
 
         public void run() {
-            Set<Thread> threadSet = Thread.getAllStackTraces().keySet();
-            System.out.println("Number of current threads: " + threadSet.size());
-            System.out.println("State: Resources requested: " + resourcesRequested + ", resources received: " + resourcesReceived + ", resources denied: " + resourcesDenied);
+            System.out.println("------------------------");
+            System.out.println("STATE");
+            System.out.println("Non-monotonic CRDT: Resources requested: " + resourcesRequested + ", resources received: " + resourcesReceived + ", resources denied: " + resourcesDenied);
+            System.out.println("Monotonic CRDTs:");
+            Node node = nodes.get(1);
+            for (Map.Entry<String, Crdt> entry : node.getMonotonicCrdts().entrySet()) {
+                System.out.println(entry.getKey() + ": " + entry.getValue().query());
+            }
+            System.out.println("------------------------");
         }
     }
 
@@ -312,25 +370,5 @@ public class Client extends Thread {
                 e.printStackTrace();
             }
         }
-    }
-
-    public void setRequestMode(MessageDistributionMode requestMode) {
-        this.requestMode = requestMode;
-    }
-
-    public int getResourcesRequested() {
-        return resourcesRequested;
-    }
-
-    public int getResourcesReceived() {
-        return resourcesReceived;
-    }
-
-    public int getResourcesDenied() {
-        return resourcesDenied;
-    }
-
-    public void setPrintReceivedMessages(boolean printReceivedMessages) {
-        this.printReceivedMessages = printReceivedMessages;
     }
 }

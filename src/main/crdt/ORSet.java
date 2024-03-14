@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
  * Observed-Remove Set CRDT.
  * Supports adding and removing elements multiple times.
  */
-public class ORSet<E> implements Crdt {
+public class ORSet<E> implements Crdt<Set<E>> {
 
     private HashMap<E, Set<String>> eset = new HashMap<>();
     private HashMap<E, Set<String>> tset = new HashMap<>();
