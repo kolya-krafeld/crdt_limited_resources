@@ -176,6 +176,11 @@ public class Node {
     private int lastDecideRoundNumber = 0;
 
     /**
+     * Unique rounder number for node. Used to identify the current prepere phase.
+     */
+    private int preparePhaseRound = 0;
+
+    /**
      * Flag used for testing. If set to true, the node will add a delay to every message it sends.
      */
     private boolean addMessageDelay = false;
@@ -194,6 +199,7 @@ public class Node {
     private Config config;
     private ScheduledExecutorService clockExecutor;
     public FailureDetector failureDetector;
+    public final Object fdLock = new Object();
     public LogicalClock logicalClock;
     public BallotLeaderElection ballotLeaderElection;
 
@@ -237,6 +243,7 @@ public class Node {
 
         ScheduledExecutorService clockExecutor = Executors.newScheduledThreadPool(1);
         clockExecutor.scheduleAtFixedRate(() -> logicalClock.tick(), 0, config.tickLength(), TimeUnit.MILLISECONDS);
+
         if (startFailureDetector) {
             failureDetector.start();
         }
@@ -259,7 +266,9 @@ public class Node {
     public void kill() {
         logger.warn("Killed!");
 
-        failureDetector.interrupt();
+//        failureDetector.stopFD();
+//        failureDetector.interrupt();
+        failureDetector.setActive(false);
         messageReceiver.interrupt();
         messageReceiver.stopReceiver();
         messageProcessor.interrupt();
@@ -272,7 +281,7 @@ public class Node {
     /**
      * Restarts the node after it failed.
      */
-    public void restart() {
+    public void restart(boolean isTest) {
         logger.info("Restarted!");
         inRestartPhase = true;
         // Reload state
@@ -287,6 +296,9 @@ public class Node {
             throw new RuntimeException(e);
         }
 
+//        if (true) {
+//            this.failureDetector = new FailureDetector(this, nodesPorts, config);
+//        }
         // Start all jobs again, except failure detector
         init(false);
 
@@ -301,8 +313,11 @@ public class Node {
                 throw new RuntimeException(e);
             }
         }
-        this.failureDetector = new FailureDetector(this, nodesPorts, config);
-        failureDetector.start();
+        //failureDetector.start();
+        failureDetector.setActive(true);
+        synchronized (fdLock) {
+            fdLock.notifyAll();
+        }
     }
 
     public void startLeaderElection() {
@@ -473,5 +488,13 @@ public class Node {
 
     public void setCoordinateForEveryResource(boolean coordinateForEveryResource) {
         this.coordinateForEveryResource = coordinateForEveryResource;
+    }
+
+    public int getPreparePhaseRound() {
+        return preparePhaseRound;
+    }
+
+    public void setPreparePhaseRound(int preparePhaseRound) {
+        this.preparePhaseRound = preparePhaseRound;
     }
 }

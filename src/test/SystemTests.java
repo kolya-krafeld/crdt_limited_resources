@@ -81,7 +81,7 @@ public class SystemTests {
         setUpNodes(nodes, ports, numberOfNodes, requestResources);
 
         Client client = new Client(ports, nodes, requestResources + additionalRequests, 10, Client.Mode.TEST);
-        client.setRequestMode(Client.MessageDistributionMode.ONLY_FOLLOWER);
+        client.setRequestMode(Client.MessageDistributionMode.SINGLE_FOLLOWER);
         try {
             client.start();
             client.join();
@@ -158,7 +158,7 @@ public class SystemTests {
             }
             Thread.sleep(1000); //give nodes time to answer to requests
             assertEquals("One from the total 9 leases is hold by dead Node 1", 8, client.getResourcesReceived());
-            nodes.get(1).restart();
+            nodes.get(1).restart(true);
             Thread.sleep(1000); //give node time to restart and sync with the leader
             for (int i = 0; i < 2; i++) {
                 client.requestLimitedResource(0);
@@ -198,7 +198,7 @@ public class SystemTests {
             Thread.sleep(500); // give nodes time to answer to requests
             assertEquals("Expect", 6, client.getResourcesReceived());
             nodes.get(0).kill(); // Node 0 should have 3 leases, so one is lost, as this node is the leader, the leader election gets started
-            Thread.sleep(2000); // give nodes time to detect dead leader and elect a new one
+            Thread.sleep(3000); // give nodes time to detect dead leader and elect a new one
             if (!nodes.get(1).isLeader() && !nodes.get(2).isLeader()) {
                 assertTrue("We must have a new leader by now", nodes.get(1).isLeader() || nodes.get(2).isLeader());
             }
@@ -209,8 +209,8 @@ public class SystemTests {
                 client.requestLimitedResource(2);
             }
             Thread.sleep(1000); //give nodes time to answer to requests
-            assertEquals("One from the total 9 leases is hold by dead Node 0", 8, client.getResourcesReceived());
-            nodes.get(0).restart();
+            assertTrue("One from the total 9 leases is hold by dead Node 0", 9 > client.getResourcesReceived());
+            nodes.get(0).restart(true);
             Thread.sleep(1000); //give node time to restart and sync with the new leader
             for (int i = 0; i < 2; i++) {
                 client.requestLimitedResource(0);

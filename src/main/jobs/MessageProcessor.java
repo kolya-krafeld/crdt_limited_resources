@@ -64,6 +64,11 @@ public class MessageProcessor extends Thread {
     private int lastAcceptRoundSend = 0;
 
     /**
+     * Round when the last prepare was send. Prevents sending prepare messages multiple times in prepare phase round.
+     */
+    private int lastPrepareRoundSend = 0;
+
+    /**
      * Flag to indicate that we have already sent an accept-sync message in this prepare phase.
      */
     private boolean prepareAcceptSyncAlreadySent = false;
@@ -94,26 +99,29 @@ public class MessageProcessor extends Thread {
      */
     public void run() {
         while (true) {
-            if (!node.monotonicCrdtMessageQueue.isEmpty()) {
-                handleMonotonicCrdtMerge(node.monotonicCrdtMessageQueue.poll());
-            }
-
             if (!node.findLeaderMessageQueue.isEmpty()) {
                 matchFindLeaderMessage(node.findLeaderMessageQueue.poll());
             }
+
             if (!node.heartbeatAndElectionMessageQueue.isEmpty()) {
                 matchHeartbeatAndElectionMessage(node.heartbeatAndElectionMessageQueue.poll());
             }
+
             if (!(node.isSearchingForLeader || node.leaderElectionInProcess)) {
                 if (!node.preparePhaseMessageQueue.isEmpty() && node.isLeader() && node.isInPreparePhase()) {
                     matchPreparePhaseMessage(node.preparePhaseMessageQueue.poll());
                 }
-                if (!node.coordinationMessageQueue.isEmpty()) {
+
+                if (!node.coordinationMessageQueue.isEmpty() && !node.isInPreparePhase()) {
                     matchCoordinationMessage(node.coordinationMessageQueue.poll());
-                } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase()) {
+                } else if (!node.operationMessageQueue.isEmpty() && !node.isInCoordinationPhase() && !node.isInRestartPhase() && !node.isInPreparePhase()) {
                     // Only process operation messages if we are not in the coordination or restart phase
                     matchOperationMessage(node.operationMessageQueue.poll());
                 }
+            }
+
+            if (!node.monotonicCrdtMessageQueue.isEmpty()) {
+                handleMonotonicCrdtMerge(node.monotonicCrdtMessageQueue.poll());
             }
         }
     }
@@ -287,7 +295,7 @@ public class MessageProcessor extends Thread {
      * Only triggered after we have received a state from all nodes OR a quorum and the timeout has passed.
      */
     private synchronized void sendAcceptSyncMessageAfterQuorumReached() {
-        if (prepareAcceptSyncAlreadySent) {
+        if (lastPrepareRoundSend >= node.getPreparePhaseRound()) {
             // We have already sent an accept-sync message in this round. We can ignore this.
             logger.debug("We have already sent a accept-sync message in this prepare phase.");
             return;
@@ -296,11 +304,14 @@ public class MessageProcessor extends Thread {
         // Set new round number
         node.setRoundNumber(maxRoundNumberInPreparePhase);
         node.setLastDecideRoundNumber(maxRoundNumberInPreparePhase);
+        node.setInPreparePhase(false);
+        node.setInCoordinationPhase(false);
 
         // Send ACCEPT-SYNC to all nodes
         String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString();
         messageHandler.broadcast(outMessage);
         prepareAcceptSyncAlreadySent = true;
+        lastPrepareRoundSend = node.getPreparePhaseRound();
 
         // Reset number of promises
         numberOfPromises = 0;
@@ -329,6 +340,7 @@ public class MessageProcessor extends Thread {
         leaderMergedCrdt = node.getLimitedResourceCrdt(); // set leader crdt first
         this.lastPrepareSent = System.currentTimeMillis();
         prepareAcceptSyncAlreadySent = false; // Reset flag
+        node.setPreparePhaseRound(node.getRoundNumber() + 1);
 
         // Send prepare message to all nodes
         String message = MessageType.PREPARE.getTitle();
@@ -343,6 +355,8 @@ public class MessageProcessor extends Thread {
      * Leader receives request-sync from a follower that has just restarted.
      */
     private void receiveRequestSync(Message message) {
+        logger.debug("Received request-sync from follower." + (this.node.isLeader() ? " I am the leader." : " I am not the leader."));
+        logger.debug("Prepare phase:" + this.node.isInPreparePhase() + " Coordination phase:" + this.node.isInCoordinationPhase() + " Restart phase:" + this.node.isInRestartPhase());
         if (node.isLeader()) {
 
             int followerRoundNumber = Integer.parseInt(message.getContent());
@@ -468,6 +482,9 @@ public class MessageProcessor extends Thread {
             }
 
             LimitedResourceCrdt state = new LimitedResourceCrdt(crdtString);
+            if (leaderMergedCrdt == null) {
+                leaderMergedCrdt = node.getLimitedResourceCrdt();
+            }
             leaderMergedCrdt.merge(state);
             logger.debug("Merged state CRDT: " + state + " to " + leaderMergedCrdt.toString());
             statesReceivedFrom.add(message.getPort());
@@ -623,6 +640,10 @@ public class MessageProcessor extends Thread {
         // Set last decide round number
         node.setLastDecideRoundNumber(node.getRoundNumber());
 
+        if (leaderMergedCrdt == null) {
+            leaderMergedCrdt = node.getLimitedResourceCrdt();
+        }
+
         // Persist state before sending DECIDE to all nodes
         persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
 
@@ -728,6 +749,7 @@ public class MessageProcessor extends Thread {
         }
 
         logger.info("AVAILABLE RESOURCES: " + availableResources);
+        logger.debug("STATE RECEIVED FROM: " + statesReceivedFrom);
 
         if (node.isCoordinateForEveryResource()) {
             if (availableResources > 0) {
@@ -795,10 +817,12 @@ public class MessageProcessor extends Thread {
                     int indexOfRequester = node.getNodesPorts().indexOf(leaseRequestFrom.get(0));
                     // Give requesting process one lease
                     leaderMergedCrdt.setUpper(indexOfRequester, highestUpperCounter + 1);
+                    leaderMergedCrdt.setLower(indexOfRequester, highestUpperCounter); // just to double check that it is set correctly
                     availableResources--;
 
                     // Assign the remaining resources to the leader
                     leaderMergedCrdt.setUpper(node.getOwnIndex(), highestUpperCounter + availableResources);
+                    leaderMergedCrdt.setLower(node.getOwnIndex(), highestUpperCounter);
                 }
             }
         }
@@ -1077,5 +1101,13 @@ public class MessageProcessor extends Thread {
 
     public LimitedResourceCrdt getLeaderMergedCrdt() {
         return leaderMergedCrdt;
+    }
+
+    public List<Integer> getLeaseRequestFrom() {
+        return leaseRequestFrom;
+    }
+
+    public void setLeaseRequestFrom(List<Integer> leaseRequestFrom) {
+        this.leaseRequestFrom = leaseRequestFrom;
     }
 }

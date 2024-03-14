@@ -48,9 +48,10 @@ public class MessageReceiver extends Thread {
                     logger.info("Message received from " + receivePacket.getPort() + ": " + receivedMessage);
                 }
                 Message message = new Message(receivePacket.getAddress(), receivePacket.getPort(), receivedMessage);
+                this.node.failureDetector.addTimeWhenWeReceivedLastMessageFromNode(message.getPort());
 
                 //if message was forwarded to leader, we need to extract the original message
-                if (message.getType()==MessageType.FORWARDED_TO_LEADER){
+                if (message.getType() == MessageType.FORWARDED_TO_LEADER) {
                     message = Message.messageFromForwaredMessage(message.getContent());
                 }
 
@@ -59,37 +60,37 @@ public class MessageReceiver extends Thread {
                     logger.error(message.toString());
                 }
 
-                //if message is for leader, but node is not the leader, forward the message to the leader
-                if(message.getType()!=null && message.getType().isForLeaderMessage() && !node.isLeader()){
+                // If message is for leader, but node is not the leader, forward the message to the leader
+                if (message.getType() != null && message.getType().isForLeaderMessage() && !node.isLeader()) {
                     logger.warn("Message is for leader, but this node is not the leader, forwarding message to the leader: " + node.getLeaderPort());
                     String forwardMessage = MessageType.FORWARDED_TO_LEADER + ":" + message;
                     node.messageHandler.sendToLeader(forwardMessage);
-                }else{
-                // Add message to the correct queue for processing
-                if (message.getType() == MessageType.MERGE_MONOTONIC) {
-                    node.monotonicCrdtMessageQueue.add(message);
-                } else if (message.getType().isFindLeaderMessage()) {
-                    node.findLeaderMessageQueue.add(message);
-                } else if (message.getType().heartbeatOrLeaderElectionMessage()) {
-                    node.heartbeatAndElectionMessageQueue.add(message);
-                } else if (message.getType().isPreparePhaseMessage()) {
-                    node.preparePhaseMessageQueue.add(message);
-                } else if (message.getType().isCoordinationMessage()) {
-                    node.coordinationMessageQueue.add(message);
                 } else {
-                    if (message == null) {
-                        logger.error("Message is null");
-                    }
+                    // Add message to the correct queue for processing
+                    if (message.getType() == MessageType.MERGE_MONOTONIC) {
+                        node.monotonicCrdtMessageQueue.add(message);
+                    } else if (message.getType().isFindLeaderMessage()) {
+                        node.findLeaderMessageQueue.add(message);
+                    } else if (message.getType().heartbeatOrLeaderElectionMessage()) {
+                        node.heartbeatAndElectionMessageQueue.add(message);
+                    } else if (message.getType().isPreparePhaseMessage()) {
+                        node.preparePhaseMessageQueue.add(message);
+                    } else if (message.getType().isCoordinationMessage()) {
+                        node.coordinationMessageQueue.add(message);
+                    } else {
+                        if (message == null) {
+                            logger.error("Message is null");
+                        }
 
-                    // Todo remove: only used for benchmarking
-                    if (message.getType() == MessageType.DEC) {
-                        decMessagesReceived++;
-                        if (decMessagesReceived % 10000 == 0)
-                            System.out.println("Received " + decMessagesReceived + " dec messages");
+                        // Todo remove: only used for benchmarking
+                        if (message.getType() == MessageType.DEC) {
+                            decMessagesReceived++;
+                            if (decMessagesReceived % 10000 == 0)
+                                System.out.println("Received " + decMessagesReceived + " dec messages");
+                        }
+                        node.operationMessageQueue.add(message);
                     }
-                    node.operationMessageQueue.add(message);
                 }
-            }
             }
         } catch (SocketException se) {
             logger.info("Socket exception: " + se.getMessage());

@@ -37,6 +37,11 @@ public class FailureDetector extends Thread {
     private final int tickLength;
 
     /**
+     * Flag whether failure detector should currently be active
+     */
+    private boolean active = true;
+
+    /**
      * Thread responsible for detecting node failures and starting leader election.
      * Leader elections are also happening in this thread, as they are started from here.
      * When a node receives a leader election message, the failure detector keeps running, but it won't start a new leader election, for example if it also detects that the leader is dead.
@@ -65,11 +70,18 @@ public class FailureDetector extends Thread {
     public void run() {
         try {
             while (true) {
-                sendHeartbeatRequest();
-                if (node.getTime() % this.heartbeatTimeout == 0) {
-                    checkHeartbeats();
+                if (active) {
+                    //logger.info("Checking heartbeats...");
+                    sendHeartbeatRequest();
+                    if (node.getTime() % this.heartbeatTimeout == 0) {
+                        checkHeartbeats();
+                    }
+                    Thread.sleep(tickLength);
+                } else {
+                    synchronized (node.fdLock) {
+                        node.fdLock.wait();
+                    }
                 }
-                Thread.sleep(tickLength);
             }
 
         } catch (InterruptedException e) {
@@ -84,6 +96,11 @@ public class FailureDetector extends Thread {
      */
     private void sendHeartbeatRequest() {
         for (int receiverNode : this.allNodes) {
+            if (receiverNode == this.node.getOwnPort()) {
+                // Don't send a heartbeat to yourself
+                continue;
+            }
+
             HeartbeatMessage heartBeatMessage = new HeartbeatMessage(this.node.isQuorumConnected(), node.ballotNumber);
             String message = MessageType.HB_REQUEST.getTitle() + ":" + heartBeatMessage;
             node.messageHandler.send(message, receiverNode);
@@ -98,10 +115,17 @@ public class FailureDetector extends Thread {
     private void checkHeartbeats() {
         List<Integer> toBeSuspected = new ArrayList<>();
         List<Integer> toBeUnsuspected = new ArrayList<>();
+
         for (int node : this.allNodes) {
+            if (node == this.node.getOwnPort()) {
+                // Don't check yourself
+                continue;
+            }
+
             int send = sendHeartbeatPingAtTime.getOrDefault(node, -1);
             int received = gotHeartbeatPongAtTime.getOrDefault(node, -1);
             if (received < 0 || send - received > this.heartbeatTimeout) {
+                logger.debug(this.node.getOwnPort() + ": " + node + " is suspected to be dead! Send: " + send + " Received: " + received);
                 toBeSuspected.add(node);
             } else {
                 toBeUnsuspected.add(node);
@@ -109,16 +133,19 @@ public class FailureDetector extends Thread {
         }
         this.suspectedNodes = toBeSuspected;
         this.unsuspectedNodes = toBeUnsuspected;
+        unsuspectedNodes.add(node.getOwnPort()); // Add yourself to the unsuspected nodes
         if (this.unsuspectedNodes.size() >= this.node.getQuorumSize()) {
             this.node.setQuorumConnected(true);
         } else {
             logger.warn("Not connected to quorum");
             this.node.setQuorumConnected(false);
         }
+
         if (this.suspectedNodes.contains(this.node.getLeaderPort()) && !node.leaderElectionInProcess) {
             logger.warn("Leader is suspected to be dead, starting leader election");
             this.node.startLeaderElection();
         }
+
         if (this.node.getLeaderPort() == -1 && !node.leaderElectionInProcess) {
             logger.warn("Leader is set to -1, starting leader election");
             this.node.startLeaderElection();
@@ -140,7 +167,11 @@ public class FailureDetector extends Thread {
             this.node.isSearchingForLeader = true;
             findNewLeader();
         }
-        this.gotHeartbeatPongAtTime.put(node, this.node.getTime());
+        addTimeWhenWeReceivedLastMessageFromNode(node);
+    }
+
+    public void addTimeWhenWeReceivedLastMessageFromNode(int nodePort) {
+        this.gotHeartbeatPongAtTime.put(nodePort, this.node.getTime());
     }
 
     /*
@@ -175,6 +206,10 @@ public class FailureDetector extends Thread {
     //only for test purposes
     public synchronized int numberOfConnectedNodes() {
         return this.unsuspectedNodes.size();
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 }
 

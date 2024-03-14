@@ -60,7 +60,7 @@ public class BenchmarkTests {
     public void testSystemWorkloadHeavyNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.ONLY_FOLLOWER, false);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.SINGLE_FOLLOWER, false);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -113,7 +113,7 @@ public class BenchmarkTests {
 
 
         Message message = new Message(InetAddress.getByName("localhost"), 5000 + iteration, "decrement");
-        if (mode == Client.MessageDistributionMode.ONLY_FOLLOWER) {
+        if (mode == Client.MessageDistributionMode.SINGLE_FOLLOWER) {
             Node follower = nodes.get(1);
 
             for (int i = 0; i < numberOfResources + additionalRequests; i++) {
@@ -134,7 +134,7 @@ public class BenchmarkTests {
 
         Client client = new Client(ports, nodes, numberOfResources + additionalRequests, 0, 5000 + iteration, Client.Mode.BENCHMARK);
         client.setPrintReceivedMessages(false);
-        client.setRequestMode(Client.MessageDistributionMode.ONLY_FOLLOWER);
+        client.setRequestMode(Client.MessageDistributionMode.SINGLE_FOLLOWER);
         long runtime = 0l;
         try {
             client.start();

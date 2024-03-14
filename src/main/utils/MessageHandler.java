@@ -73,7 +73,7 @@ public class MessageHandler {
                     sendPacket = new DatagramPacket(buf, buf.length, ip, port);
                     socket.send(sendPacket);
                 } catch (IOException e) {
-                    if (!e.getMessage().equals("Socket closed")) return;
+                    if (e.getMessage().equals("Socket closed")) return;
                     throw new RuntimeException(e);
                 }
             }

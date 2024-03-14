@@ -75,7 +75,8 @@ public class Client extends Thread {
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
     private boolean printReceivedMessages = true;
-    private boolean killFollowers = false;
+    private boolean killNodes = false;
+    private NodeKiller.NodeKillerType nodeKillerType = NodeKiller.NodeKillerType.SINGLE_FOLLOWER;
 
     public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, Mode mode) {
         this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080, mode);
@@ -102,10 +103,11 @@ public class Client extends Thread {
     public static void main(String[] args) throws Exception {
         int numberOfNodes = 3;
         int numberOfResourcesPerNode = 10;
+        int numberOfRequests = 100;
         boolean addMessageDelay = false;
-        boolean killFollowers = true;
+        boolean killNodes = false;
         int messageRequestDelay = 750;
-        MessageDistributionMode requestMode = MessageDistributionMode.ONLY_FOLLOWER;
+        MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
 
 
         Config config = new Config(100, 5, 2, 5);
@@ -137,24 +139,26 @@ public class Client extends Thread {
         }
 
 
-        Client client = new Client(ports, nodes, 50, messageRequestDelay, Mode.NORMAL);
+        Client client = new Client(ports, nodes, numberOfRequests, messageRequestDelay, Mode.NORMAL);
         client.setRequestMode(requestMode);
-        client.setKillFollowers(killFollowers);
+        if (killNodes) {
+            client.setKillNodes(killNodes);
+            client.setNodeKillerType(NodeKiller.NodeKillerType.RANDOM);
+        }
         client.start();
     }
 
     public void run() {
         messageReceiver = new MessageReceiver();
         messageReceiver.start();
-        executor = Executors.newScheduledThreadPool(2);
+        executor = Executors.newScheduledThreadPool(3);
         StatePrinter statePrinter = new StatePrinter();
         executor.scheduleAtFixedRate(statePrinter, 5, 5, TimeUnit.SECONDS);
 
-        if (killFollowers) {
-            // Kill nodes every 2 seconds
-            NodeKiller follower1Killer = new NodeKiller(1, nodes, true, 2000);
-            executor.scheduleAtFixedRate(follower1Killer, 3, 5, TimeUnit.SECONDS);
-            //executor.schedule(new NodeKiller(2, 10000, nodes), 0, TimeUnit.MILLISECONDS);
+        if (killNodes) {
+            // Kill nodes every 5 seconds
+            NodeKiller nodeKiller = new NodeKiller(nodeKillerType, nodes, true, 2000);
+            executor.scheduleAtFixedRate(nodeKiller, 5, 8, TimeUnit.SECONDS);
         }
 
         try {
@@ -239,7 +243,7 @@ public class Client extends Thread {
         } else if (requestMode == MessageDistributionMode.ONLY_LEADER) {
             // Send request to leader (assuming leader is first node in list)
             indexOfNode = 0;
-        } else if (requestMode == MessageDistributionMode.ONLY_FOLLOWER) {
+        } else if (requestMode == MessageDistributionMode.SINGLE_FOLLOWER) {
             // Send request to first follower node
             indexOfNode = 1;
         } else if (requestMode == MessageDistributionMode.SPECIFIC_NODES) {
@@ -277,8 +281,12 @@ public class Client extends Thread {
         return resourcesDenied;
     }
 
-    public void setKillFollowers(boolean killFollowers) {
-        this.killFollowers = killFollowers;
+    public void setKillNodes(boolean killNodes) {
+        this.killNodes = killNodes;
+    }
+
+    public void setNodeKillerType(NodeKiller.NodeKillerType nodeKillerType) {
+        this.nodeKillerType = nodeKillerType;
     }
 
     public void setPrintReceivedMessages(boolean printReceivedMessages) {
@@ -288,7 +296,7 @@ public class Client extends Thread {
     public enum MessageDistributionMode {
         RANDOM,
         ONLY_LEADER,
-        ONLY_FOLLOWER,
+        SINGLE_FOLLOWER,
         EXCLUDE_LEADER,
         SPECIFIC_NODES
     }
