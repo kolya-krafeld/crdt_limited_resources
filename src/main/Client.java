@@ -65,8 +65,6 @@ public class Client extends Thread {
     /**
      * Time to sleep between killing nodes.
      */
-    private int delayBetweenKills = 0;
-
     private ScheduledExecutorService executor;
     private MessageReceiver messageReceiver;
 
@@ -78,22 +76,19 @@ public class Client extends Thread {
     Object sharedObject = new Object();
 
     public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, Mode mode) {
-        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080, mode, 0);
+        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, 8080, mode);
     }
 
-    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort,  Mode mode) {
-        this(nodePorts, nodes, numberOfRequest, sleepTimeBetweenRequests, clientPort, mode, 0);
+    public Client(List<Integer> nodePorts, List<Node> nodes, Mode mode) {
+        this(nodePorts, nodes, -1, -1, 8080, mode);
     }
 
-
-    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort, Mode mode, int delayBetweenKills) {
+    public Client(List<Integer> nodePorts, List<Node> nodes, int numberOfRequest, int sleepTimeBetweenRequests, int clientPort, Mode mode) {
         this.nodePorts = nodePorts;
         this.nodes = nodes;
         this.numberOfRequest = numberOfRequest;
         this.sleepTimeBetweenRequests = sleepTimeBetweenRequests;
         this.mode = mode;
-        this.delayBetweenKills = delayBetweenKills;
-
         try {
             this.socket = new DatagramSocket(clientPort);
         } catch (IOException e) {
@@ -141,20 +136,22 @@ public class Client extends Thread {
         StatePrinter statePrinter = new StatePrinter();
         executor.scheduleAtFixedRate(statePrinter, 5, 5, TimeUnit.SECONDS);
 
-        if (this.delayBetweenKills > 0) {
-            NodeKiller nodeKiller = new NodeKiller();
-            executor.scheduleAtFixedRate(nodeKiller, 6, delayBetweenKills, TimeUnit.SECONDS);
-        }
-
-        try {
-            for (int i = 0; i < this.numberOfRequest; i++) {
-                Thread.sleep(sleepTimeBetweenRequests);
-                requestLimitedResource();
-                if (mode == Mode.NORMAL) {
-                    updateMonotonicCrdts();
+        if (mode == Mode.TEST) {
+            if (requestMode != MessageDistributionMode.SPECIFIC_NODES) {
+                for (int i = 0; i < this.numberOfRequest; i++) {
+                    try {
+                        Thread.sleep(sleepTimeBetweenRequests);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    requestLimitedResource();
+                    if (mode == Mode.NORMAL) {
+                        updateMonotonicCrdts();
+                    }
                 }
             }
-
+        }
+        try {
             // Wait for message receiver to get response for all requests
             synchronized (sharedObject) {
                 sharedObject.wait();
@@ -210,7 +207,7 @@ public class Client extends Thread {
      * Method to request limited resource from node.
      * Mode determines whether we send request to random node, the leader or specific follower.
      */
-    public void requestLimitedResource() {
+    public void requestLimitedResource(int nodeIndex) {
         byte[] buf = "decrement".getBytes();
         int indexOfNode = 0;
         if (requestMode == MessageDistributionMode.RANDOM) {
@@ -225,6 +222,8 @@ public class Client extends Thread {
         } else if (requestMode == MessageDistributionMode.ONLY_FOLLOWER) {
             // Send request to first follower node
             indexOfNode = 1;
+        } else if (requestMode == MessageDistributionMode.SPECIFIC_NODES) {
+            indexOfNode = nodeIndex;
         }
 
         try {
@@ -236,47 +235,24 @@ public class Client extends Thread {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
 
-
+    public void requestLimitedResource() {
+        requestLimitedResource(-1);
     }
 
     public enum MessageDistributionMode {
         RANDOM,
         ONLY_LEADER,
         ONLY_FOLLOWER,
-        EXCLUDE_LEADER
+        EXCLUDE_LEADER,
+        SPECIFIC_NODES
     }
 
     public enum Mode {
         NORMAL,
         TEST,
         BENCHMARK
-    }
-
-
-    /**
-     * Thread that kills random node at specific interval.
-     */
-    class NodeKiller extends Thread {
-
-        public void run() {
-            // Get random number between 1 and nodes.size()
-            //int random = (int) (Math.random() * (nodes.size() - 1)) +1;
-            int random = 0;
-
-            Node node = nodes.get(random);
-            System.out.println("Killing node: " + node.getOwnPort());
-            node.kill();
-
-            // Sleep for 20 sec
-            try {
-                Thread.sleep(20000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-
-            node.restart();
-        }
     }
 
     /**

@@ -91,7 +91,6 @@ public class MessageProcessor extends Thread {
      * the leader has failed and an election is in process
      * the leader is not connecting to a quorum anymore
      * the node missed the last election
-     *
      */
     public void run() {
         while (true) {
@@ -105,7 +104,7 @@ public class MessageProcessor extends Thread {
             if (!node.heartbeatAndElectionMessageQueue.isEmpty()) {
                 matchHeartbeatAndElectionMessage(node.heartbeatAndElectionMessageQueue.poll());
             }
-            if(!(node.isSearchingForLeader|| node.leaderElectionInProcess)) {
+            if (!(node.isSearchingForLeader || node.leaderElectionInProcess)) {
                 if (!node.preparePhaseMessageQueue.isEmpty() && node.isLeader() && node.isInPreparePhase()) {
                     matchPreparePhaseMessage(node.preparePhaseMessageQueue.poll());
                 }
@@ -349,7 +348,7 @@ public class MessageProcessor extends Thread {
                 // we will send a DECIDE message to all processes. And the follower will receive it and end the restart phase.
             } else {
                 // We are not in the same coordination phase as before. Send accept-sync to follower.
-                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString() + ":" + node.ballotNumber;
                 messageHandler.send(messageStr, message.getPort());
             }
         }
@@ -359,22 +358,23 @@ public class MessageProcessor extends Thread {
      * Receive accept-sync from leader. Format of message: <accept-sync>:<round-number>:<crdt>
      */
     private void receiveAcceptSync(Message message) {
-        if (!node.isLeader()) {
-
-            String[] messageParts = message.getContent().split(":");
-            int leaderRoundNumber = Integer.parseInt(messageParts[0]);
-            String crdtString = messageParts[1];
-            node.mergeCrdts(crdtString);
-            node.setRoundNumber(leaderRoundNumber);
-            node.setLastDecideRoundNumber(leaderRoundNumber);
-
-            // Persist newly loaded state
-            persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
-
-            node.setLeaderPort(message.getPort());
-            node.setInRestartPhase(false);
-            node.setInCoordinationPhase(false); // Stop coordination phase after receiving accept-sync
+        String[] messageParts = message.getContent().split(":");
+        int leaderRoundNumber = Integer.parseInt(messageParts[0]);
+        String crdtString = messageParts[1];
+        if (node.isInRestartPhase()) {
+            int currentLeaderBallotNumber = Integer.parseInt(messageParts[2]);
+            node.leaderBallotNumber = currentLeaderBallotNumber;
         }
+        node.mergeCrdts(crdtString);
+        node.setRoundNumber(leaderRoundNumber);
+        node.setLastDecideRoundNumber(leaderRoundNumber);
+
+        // Persist newly loaded state
+        persister.persistState(false, node.getLastDecideRoundNumber(), node.getLimitedResourceCrdt(), Optional.empty(), node.leaderBallotNumber);
+
+        node.setLeaderPort(message.getPort());
+        node.setInRestartPhase(false);
+        node.setInCoordinationPhase(false); // Stop coordination phase after receiving accept-sync
     }
 
     /**
@@ -531,14 +531,14 @@ public class MessageProcessor extends Thread {
         if (amountOfMessagesReceived + 1 == node.getNodesPorts().size()) {
             logger.debug("Received messages from all nodes.");
 
-            // Trigger function
+            // Trigger functions
             triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
             return;
         }
         // +1 is for leader
         if (amountOfMessagesReceived + 1 >= node.getQuorumSize()
-                && System.currentTimeMillis() > messageWaitTime + lastMessageSent) {
-            logger.debug("Received messages from quorum of nodes after wait time had passed.");
+                && System.currentTimeMillis() > Long.sum(messageWaitTime, lastMessageSent)) {
+            logger.debug("Received messages from quorum of nodes after wait time had passed. Message wait time: " + messageWaitTime + "lastMessageSent: " + lastMessageSent +"Sum: "+  Long.sum(messageWaitTime,lastMessageSent) +" Current time: " + System.currentTimeMillis());
             // Trigger function
             triggerNextCoordinationBasedOnQuorumType(messageType, roundNumber);
         } else if (amountOfMessagesReceived + 1 >= node.getQuorumSize()) {
@@ -734,7 +734,7 @@ public class MessageProcessor extends Thread {
                 leaderMergedCrdt.setUpper(indexOfRequester, leaderMergedCrdt.getUpperCounter().get(indexOfRequester) + 1);
 
                 // Rust take away one resource from the leader
-                leaderMergedCrdt.setLower(node.getOwnIndex(),  leaderMergedCrdt.getLowerCounter().get(node.getOwnIndex()) + 1);
+                leaderMergedCrdt.setLower(node.getOwnIndex(), leaderMergedCrdt.getLowerCounter().get(node.getOwnIndex()) + 1);
             } else {
                 // We are out of resources now
                 node.setOutOfResources(true);
@@ -956,7 +956,7 @@ public class MessageProcessor extends Thread {
      * Reply to a FIND_LEADER message with the leader's port and the leaders ballot number.
      */
     private void replyToFindLeaderMessage(int replyPort) {
-        String messageStr = MessageType.FIND_LEADER_REPLY.getTitle() + ":" + node.getLeaderPort() +","+ node.leaderBallotNumber;
+        String messageStr = MessageType.FIND_LEADER_REPLY.getTitle() + ":" + node.getLeaderPort() + "," + node.leaderBallotNumber;
         node.messageHandler.send(messageStr, replyPort);
     }
 
@@ -964,11 +964,11 @@ public class MessageProcessor extends Thread {
      * Puts the leader port, the time the same leader got confirmed and the leaders ballot number into the findLeaderAnswers map.
      * This map is then checked by the FailureDetector if a leader got the majority.
      */
-    private void checkWhoIsLeader (String messageContent){
+    private void checkWhoIsLeader(String messageContent) {
         String[] parts = messageContent.split(",");
         int leaderPort = Integer.parseInt(parts[0]);
         int leaderBallot = Integer.parseInt(parts[1]);
-        if(node.findLeaderAnswers.containsKey(leaderPort)){
+        if (node.findLeaderAnswers.containsKey(leaderPort)) {
             node.findLeaderAnswers.put(leaderPort, new Integer[]{node.findLeaderAnswers.get(leaderPort)[0] + 1, leaderBallot});
         } else {
             node.findLeaderAnswers.put(leaderPort, new Integer[]{1, leaderBallot});
@@ -1023,7 +1023,7 @@ public class MessageProcessor extends Thread {
      * @param function Function that is triggered after the delay. It is used to send the message.
      */
     private void delaysMessageSent(Function function) {
-        int delayInSeconds = 2;
+        int delayInSeconds = 5;
         WaitTimeTrigger messageWaitTimeTrigger = new WaitTimeTrigger(delayInSeconds * 1000, function);
         messageWaitTimeTrigger.start();
     }
@@ -1036,7 +1036,7 @@ public class MessageProcessor extends Thread {
 
         long timeToWait;
         QuorumMessageType messageType = null;
-        int roundNumber = -1 ;
+        int roundNumber = -1;
         Function function = null;
 
         public WaitTimeTrigger(long timeToWait, QuorumMessageType messageType, int roundNumber) {

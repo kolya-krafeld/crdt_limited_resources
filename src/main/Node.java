@@ -301,6 +301,7 @@ public class Node {
                 throw new RuntimeException(e);
             }
         }
+        this.failureDetector = new FailureDetector(this, nodesPorts, config);
         failureDetector.start();
     }
 
