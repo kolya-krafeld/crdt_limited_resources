@@ -10,8 +10,10 @@ A general system execution can be found here:
 
 ## Run the system
 
-Check the `Client.java` class to see how to run Nodes and the Client locally and send requests from the client.
-Run the `Client::main` to execute a test setup of the system.
+There are 3 seperate ways to check the systems execution:
+1. **BenchmarkTests**: Checkout the `BenchmarkTests.java` class and run the JUnit tests in it. They cover the **random**, **one node** & **always coordiantion** scenarios mentioned in the report. You can change the globale cariables at the top of the class to change the number of resources and nodes. The tests need to be run independantly because we are using the same socket ports in all tests.
+2. **SystemTests**: Checkout the `SystemTests.java` class and run the JUnit tests in it. The test cover different scenarios of the system (failed follower nodes, failed leader nodes,  delayed messages in the coordianation phase etc). The tests need to be run independantly because we are using the same socket ports in all tests.
+3. **Client**: Checkout the `Client.java` class and run the `main()` method in it. It spawns a specified number of nodes and allocates resources to the nodes. The client sends requests to the nodes regularly to reqeust resources. You can change the settings in the main-method to kill nodes during the execution or add message delay.
 
 ## Work split
 
