@@ -1,9 +1,7 @@
 package main.crdt;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -12,8 +10,8 @@ import java.util.stream.Collectors;
  */
 public class ORSet<E> implements Crdt<Set<E>> {
 
-    private HashMap<E, Set<String>> eset = new HashMap<>();
-    private HashMap<E, Set<String>> tset = new HashMap<>();
+    private Map<E, Set<String>> eset = new ConcurrentHashMap<>();
+    private Map<E, Set<String>> tset = new ConcurrentHashMap<>();
 
     public ORSet() {
     }

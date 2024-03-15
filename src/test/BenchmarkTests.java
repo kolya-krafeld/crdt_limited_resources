@@ -33,7 +33,6 @@ public class BenchmarkTests {
 
     private static final int NUMBER_OF_NODES = 5;
     private static final int NUMBER_OF_RESOURCES = 10 * 1000;
-    private static final int NUMBER_OF_ITERATIONS = 1;
 
     /**
      * Benchmark test for limited resource CRDT with random workload spread across all nodes.
@@ -43,7 +42,7 @@ public class BenchmarkTests {
     public void testSystemRandomWorkload() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.RANDOM, false);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, 1, Client.MessageDistributionMode.RANDOM, false);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -60,7 +59,7 @@ public class BenchmarkTests {
     public void testSystemWorkloadHeavyNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.SINGLE_FOLLOWER, false);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, 1, Client.MessageDistributionMode.SINGLE_FOLLOWER, false);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");
@@ -76,7 +75,7 @@ public class BenchmarkTests {
     public void testSystemWithCoordinationForEveryNode() throws UnknownHostException, InterruptedException {
         int additionalRequests = (int) (NUMBER_OF_RESOURCES * 0.01);
 
-        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, NUMBER_OF_ITERATIONS, Client.MessageDistributionMode.EXCLUDE_LEADER, true);
+        long runtimeAverage = testSystemXTimes(NUMBER_OF_RESOURCES, additionalRequests, NUMBER_OF_NODES, 1, Client.MessageDistributionMode.EXCLUDE_LEADER, true);
 
         System.out.println("------------------------");
         System.out.println("Average time taken: " + runtimeAverage + "ms");

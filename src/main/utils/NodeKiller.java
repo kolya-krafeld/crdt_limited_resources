@@ -12,13 +12,14 @@ import java.util.List;
 public class NodeKiller extends Thread {
 
     public enum NodeKillerType {
-        RANDOM, RANDOM_FOLLOWER, SINGLE_FOLLOWER, LEADER
+        RANDOM, RANDOM_FOLLOWER, SINGLE_FOLLOWER, LEADER, EVERY_NODE
     }
 
     boolean revive;
     int reviveTime;
     List<Node> nodes;
     NodeKillerType type;
+    int nodeKillIndex = 0;
 
     public NodeKiller(NodeKillerType type, List<Node> nodes, boolean revive, int reviveTime) {
         this.revive = revive;
@@ -43,6 +44,14 @@ public class NodeKiller extends Thread {
                     break;
                 case LEADER:
                     target = nodes.stream().filter(Node::isLeader).findFirst().get();
+                    break;
+                case EVERY_NODE:
+                    if (nodeKillIndex < nodes.size()) {
+                        target = nodes.get(nodeKillIndex);
+                        nodeKillIndex++;
+                    } else {
+                        return;
+                    }
                     break;
                 default:
                     throw new RuntimeException("Invalid type");

@@ -104,10 +104,10 @@ public class Client extends Thread {
         int numberOfNodes = 3;
         int numberOfResourcesPerNode = 10;
         int numberOfRequests = 100;
-        boolean addMessageDelay = false;
         boolean killNodes = false;
-        int messageRequestDelay = 750;
-        MessageDistributionMode requestMode = MessageDistributionMode.RANDOM;
+        boolean addMessageDelay = false;
+        int messageRequestDelay = 600;
+        MessageDistributionMode requestMode = MessageDistributionMode.SINGLE_FOLLOWER;
 
 
         Config config = new Config(100, 5, 2, 5);
@@ -135,7 +135,7 @@ public class Client extends Thread {
         // Delay coordination messages from this node
         if (addMessageDelay) {
             nodes.get(1).setAddMessageDelay(true);
-            nodes.get(2).setAddMessageDelay(true);
+            //nodes.get(2).setAddMessageDelay(true);
         }
 
 
@@ -143,7 +143,7 @@ public class Client extends Thread {
         client.setRequestMode(requestMode);
         if (killNodes) {
             client.setKillNodes(killNodes);
-            client.setNodeKillerType(NodeKiller.NodeKillerType.RANDOM);
+            client.setNodeKillerType(NodeKiller.NodeKillerType.SINGLE_FOLLOWER);
         }
         client.start();
     }
@@ -158,7 +158,7 @@ public class Client extends Thread {
         if (killNodes) {
             // Kill nodes every 5 seconds
             NodeKiller nodeKiller = new NodeKiller(nodeKillerType, nodes, true, 2000);
-            executor.scheduleAtFixedRate(nodeKiller, 5, 8, TimeUnit.SECONDS);
+            executor.scheduleAtFixedRate(nodeKiller, 5, 16, TimeUnit.SECONDS);
         }
 
         try {

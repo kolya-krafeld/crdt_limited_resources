@@ -270,7 +270,7 @@ public class MessageProcessor extends Thread {
             if (!node.isInPreparePhase()) {
                 logger.debug("Received old promise message.");
                 // Send accept-sync to follower.
-                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString();
+                String messageStr = MessageType.ACCEPT_SYNC.getTitle() + ":" + node.getLastDecideRoundNumber() + ":" + node.getLimitedResourceCrdt().toString() + ":" + node.ballotNumber;
                 messageHandler.send(messageStr, message.getPort());
                 return;
             }
@@ -308,7 +308,7 @@ public class MessageProcessor extends Thread {
         node.setInCoordinationPhase(false);
 
         // Send ACCEPT-SYNC to all nodes
-        String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString();
+        String outMessage = MessageType.ACCEPT_SYNC.getTitle() + ":" + maxRoundNumberInPreparePhase + ":" + leaderMergedCrdt.toString() + ":" + node.ballotNumber;;
         messageHandler.broadcast(outMessage);
         prepareAcceptSyncAlreadySent = true;
         lastPrepareRoundSend = node.getPreparePhaseRound();
@@ -814,7 +814,12 @@ public class MessageProcessor extends Thread {
                 // If we have resources left, give one to the requester and rest to the leader
                 if (availableResources > 0) {
                     // Get index of first requester
-                    int indexOfRequester = node.getNodesPorts().indexOf(leaseRequestFrom.get(0));
+                    int indexOfRequester;
+                    if (leaseRequestFrom.isEmpty()) {
+                        indexOfRequester = node.getOwnIndex();
+                    } else {
+                        indexOfRequester = node.getNodesPorts().indexOf(leaseRequestFrom.get(0));
+                    }
                     // Give requesting process one lease
                     leaderMergedCrdt.setUpper(indexOfRequester, highestUpperCounter + 1);
                     leaderMergedCrdt.setLower(indexOfRequester, highestUpperCounter); // just to double check that it is set correctly
